@@ -1,0 +1,879 @@
+#!/usr/bin/env python3
+"""
+Moxy - A wizard-style MKV track selection tool
+"""
+
+import subprocess
+import json
+import argparse
+from pathlib import Path
+
+# Sentinel to signal quitting the whole program from selection UIs
+QUIT = object()
+
+# Try to import colorama for colored output
+try:
+    from colorama import init, Fore, Style
+    init(autoreset=True)  # Initialize colorama
+    HAS_COLORAMA = True
+except ImportError:
+    HAS_COLORAMA = False
+    # Create dummy color classes if colorama is not available
+    class Fore:
+        BLACK = ""
+        RED = ""
+        GREEN = ""
+        YELLOW = ""
+        BLUE = ""
+        MAGENTA = ""
+        CYAN = ""
+        WHITE = ""
+        RESET = ""
+    
+    class Style:
+        BRIGHT = ""
+        DIM = ""
+        NORMAL = ""
+        RESET_ALL = ""
+
+# Try to import curses for TUI; fall back gracefully if unavailable
+try:
+    import curses  # type: ignore
+    HAS_CURSES = True
+except Exception:
+    curses = None  # type: ignore
+    HAS_CURSES = False
+
+
+def scan_directory(directory_path):
+    """
+    Scan a directory for MKV files and return a list of file paths
+    """
+    mkv_files = []
+    directory = Path(directory_path)
+    
+    if not directory.exists():
+        print(f"Error: Directory {directory_path} does not exist")
+        return mkv_files
+    
+    # Find all .mkv files in the directory
+    for file_path in directory.glob("*.mkv"):
+        mkv_files.append(file_path)
+    
+    # Sort files alphabetically
+    mkv_files.sort()
+    
+    return mkv_files
+
+
+def analyze_mkv_file(file_path):
+    """
+    Analyze an MKV file and return its track information
+    """
+    try:
+        # Use mkvmerge to get JSON info about the file
+        result = subprocess.run(
+            ["mkvmerge", "-J", str(file_path)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Parse the JSON output
+        file_info = json.loads(result.stdout)
+        
+        # Extract track information
+        tracks = []
+        for track in file_info.get("tracks", []):
+            track_info = {
+                "id": track["id"],
+                "type": track["type"],
+                "codec": track["codec"],
+                "language": track["properties"].get("language", "und"),
+                "name": track["properties"].get("track_name", ""),
+                "default": track["properties"].get("default_track", False),
+                "enabled": track["properties"].get("enabled_track", True),
+                "forced": track["properties"].get("forced_track", False)
+            }
+            
+            # Add additional info based on track type
+            if track["type"] == "audio":
+                track_info["channels"] = track["properties"].get("audio_channels", 0)
+                track_info["sampling_freq"] = track["properties"].get("audio_sampling_frequency", 0)
+            elif track["type"] == "subtitles":
+                track_info["text_subtitles"] = track["properties"].get("text_subtitles", False)
+                name_lower = track_info["name"].lower()
+                hi_flag = bool(
+                    track["properties"].get("hearing_impaired", False)
+                    or track["properties"].get("hearing_impaired_track", False)
+                    or ("sdh" in name_lower)
+                    or ("hearing" in name_lower and "imp" in name_lower)
+                )
+                track_info["sdh"] = hi_flag
+            
+            tracks.append(track_info)
+        
+        return {
+            "file_name": file_path.name,
+            "file_path": str(file_path),
+            "tracks": tracks
+        }
+    
+    except subprocess.CalledProcessError as e:
+        print(f"Error analyzing {file_path}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON for {file_path}: {e}")
+        return None
+
+
+def group_files_by_track_structure(file_analyses):
+    """
+    Group files by their track structure so files with identical tracks can be processed as batches
+    """
+    groups = []
+    
+    for file_analysis in file_analyses:
+        # Try to find an existing group with matching track structure
+        found_group = False
+        for group in groups:
+            # Compare with the first file in the group
+            if compare_track_mappings([group[0], file_analysis]):
+                group.append(file_analysis)
+                found_group = True
+                break
+        
+        # If no matching group found, create a new group
+        if not found_group:
+            groups.append([file_analysis])
+    
+    return groups
+
+
+def compare_track_mappings(file_analyses):
+    """
+    Compare track mappings across multiple files to determine if they're identical
+    Only compare essential properties: ID, type, language, codec
+    Ignore flags like default, enabled, forced since user will select manually
+    """
+    if not file_analyses or len(file_analyses) < 2:
+        return False
+    
+    # Get the track mapping from the first file
+    first_file_tracks = file_analyses[0]["tracks"]
+    second_file_tracks = file_analyses[1]["tracks"]
+    
+    # If number of tracks differ, mappings are not identical
+    if len(first_file_tracks) != len(second_file_tracks):
+        return False
+    
+    # Compare each track's essential properties
+    for i, (track, current_track) in enumerate(zip(first_file_tracks, second_file_tracks)):
+        # Compare only essential track properties
+        if (track["id"] != current_track["id"] or
+            track["type"] != current_track["type"] or
+            track["codec"] != current_track["codec"] or
+            track["language"] != current_track["language"]):
+            return False
+        
+        # Compare additional properties based on track type
+        if track["type"] == "audio":
+            channels1 = track.get("channels", 0)
+            channels2 = current_track.get("channels", 0)
+            sampling1 = track.get("sampling_freq", 0)
+            sampling2 = current_track.get("sampling_freq", 0)
+            if (channels1 != channels2 or sampling1 != sampling2):
+                return False
+        elif track["type"] == "subtitles":
+            text1 = track.get("text_subtitles", False)
+            text2 = current_track.get("text_subtitles", False)
+            if text1 != text2:
+                return False
+            # Distinguish SDH vs non-SDH subtitle variants
+            if bool(track.get("sdh", False)) != bool(current_track.get("sdh", False)):
+                return False
+    
+    return True
+
+
+def format_track_info(track):
+    """
+    Format track information for display with colors
+    """
+    # Define colors for track types
+    type_colors = {
+        "video": Fore.CYAN,
+        "audio": Fore.GREEN,
+        "subtitles": Fore.YELLOW
+    }
+    
+    # Define colors for languages
+    lang_colors = {
+        "eng": Fore.BLUE,
+        "en": Fore.BLUE,
+        "ara": Fore.RED,
+        "ar": Fore.RED,
+        "spa": Fore.MAGENTA,
+        "es": Fore.MAGENTA,
+        "fre": Fore.CYAN,
+        "fr": Fore.CYAN,
+        "chi": Fore.YELLOW,
+        "zh": Fore.YELLOW,
+        "pol": Fore.GREEN,
+        "pl": Fore.GREEN,
+        "por": Fore.MAGENTA,
+        "pt": Fore.MAGENTA,
+        "ukr": Fore.BLUE,
+        "uk": Fore.BLUE
+    }
+    
+    track_type = track["type"].capitalize()
+    language = track["language"]
+    codec = track["codec"]
+    track_id = track["id"]
+    
+    # Get colors
+    type_color = type_colors.get(track["type"].lower(), Fore.WHITE)
+    lang_color = lang_colors.get(language.lower(), Fore.WHITE)
+    
+    # Create a descriptive string for the track
+    desc_parts = [f"{type_color}Track {track_id}: {track_type}{Style.RESET_ALL}"]
+    
+    if track["type"] == "audio":
+        channels = track.get("channels", 0)
+        if channels > 0:
+            # Convert channel count to descriptive format
+            channel_desc = {
+                1: "Mono",
+                2: "Stereo",
+                6: "5.1",
+                8: "7.1"
+            }
+            channels_desc = channel_desc.get(channels, f"{channels} channels")
+            desc_parts.append(f"{Fore.WHITE}{channels_desc}{Style.RESET_ALL}")
+    
+    # Add language with color and subtitle subtype marker (e.g., SDH) with distinct color hint
+    if track.get("type") == "subtitles" and track.get("sdh"):
+        # Language in its color, SDH in language-specific hue for emphasis
+        lang_lower = str(language).lower()
+        if lang_lower in ("en", "eng"):
+            sdh_color = Fore.MAGENTA
+        elif lang_lower in ("ar", "ara"):
+            sdh_color = Fore.CYAN
+        else:
+            sdh_color = Fore.RED
+        desc_parts.append(
+            f"{lang_color}[{language} {sdh_color}SDH{Style.RESET_ALL}{lang_color}]{Style.RESET_ALL}"
+        )
+    else:
+        desc_parts.append(f"{lang_color}[{language}]{Style.RESET_ALL}")
+    
+    # Add codec
+    desc_parts.append(f"{Fore.WHITE}({codec}){Style.RESET_ALL}")
+    
+    # Add flags with colors
+    flags = []
+    if track["default"]:
+        flags.append(f"{Fore.GREEN}default{Style.RESET_ALL}")
+    if track["forced"]:
+        flags.append(f"{Fore.RED}forced{Style.RESET_ALL}")
+    if not track["enabled"]:
+        flags.append(f"{Fore.YELLOW}disabled{Style.RESET_ALL}")
+    
+    if flags:
+        desc_parts.append(f"[{', '.join(flags)}]")
+    
+    return " ".join(desc_parts)
+
+
+def format_track_curses(track):
+    """
+    Format track information for curses display
+    """
+    track_type = track["type"].capitalize()
+    language = track["language"]
+    codec = track["codec"]
+    track_id = track["id"]
+    
+    # Create a descriptive string for the track
+    desc_parts = [f"Track {track_id}: {track_type}"]
+    
+    if track["type"] == "audio":
+        channels = track.get("channels", 0)
+        if channels > 0:
+            # Convert channel count to descriptive format
+            channel_desc = {
+                1: "Mono",
+                2: "Stereo",
+                6: "5.1",
+                8: "7.1"
+            }
+            channels_desc = channel_desc.get(channels, f"{channels} channels")
+            desc_parts.append(channels_desc)
+    
+    # Add language and subtype marker for subtitles
+    if track.get("type") == "subtitles" and track.get("sdh"):
+        desc_parts.append(f"[{language} SDH]")
+    else:
+        desc_parts.append(f"[{language}]")
+    desc_parts.append(f"({codec})")
+    
+    # Add flags
+    flags = []
+    if track["default"]:
+        flags.append("default")
+    if track["forced"]:
+        flags.append("forced")
+    if not track["enabled"]:
+        flags.append("disabled")
+    
+    if flags:
+        desc_parts.append(f"[{', '.join(flags)}]")
+    
+    return " ".join(desc_parts)
+
+
+def select_tracks_interactive(tracks):
+    """
+    Interactive wizard for selecting tracks to keep using keyboard navigation
+    """
+    if not HAS_CURSES:
+        print("curses library not available, falling back to simple input method")
+        return select_tracks_simple(tracks)
+    
+    def curses_main(stdscr):
+        try:
+            # Initialize colors if available
+            if curses.has_colors():
+                curses.start_color()
+                # Use default terminal background to avoid solid color background blocks
+                try:
+                    curses.use_default_colors()
+                    _bg = -1
+                except curses.error:
+                    _bg = curses.COLOR_BLACK
+                curses.init_pair(1, curses.COLOR_CYAN, _bg)     # Video tracks
+                curses.init_pair(2, curses.COLOR_GREEN, _bg)    # Audio tracks
+                curses.init_pair(3, curses.COLOR_YELLOW, _bg)   # Subtitle tracks
+                curses.init_pair(4, curses.COLOR_BLUE, _bg)     # English
+                curses.init_pair(5, curses.COLOR_RED, _bg)      # Arabic
+                curses.init_pair(6, curses.COLOR_MAGENTA, _bg)  # Other languages
+                # SDH hint colors by language
+                curses.init_pair(7, curses.COLOR_MAGENTA, _bg)  # SDH (English)
+                curses.init_pair(8, curses.COLOR_CYAN, _bg)     # SDH (Arabic)
+                curses.init_pair(9, curses.COLOR_RED, _bg)      # SDH (Other)
+            
+            # Hide cursor
+            try:
+                curses.curs_set(0)
+            except curses.error:
+                pass
+            
+            # Enable keypad mode for special keys
+            stdscr.keypad(True)
+            
+            # Create a list to track which tracks are selected
+            selected = [True] * len(tracks)  # By default, keep all tracks
+            
+            # Group tracks by type for better display
+            video_tracks = [i for i, track in enumerate(tracks) if track["type"] == "video"]
+            audio_tracks = [i for i, track in enumerate(tracks) if track["type"] == "audio"]
+            subtitle_tracks = [i for i, track in enumerate(tracks) if track["type"] == "subtitles"]
+            all_track_indices = video_tracks + audio_tracks + subtitle_tracks
+            
+            # Current selection index and scroll offset over the flattened track list
+            current_index = 0
+            scroll_offset = 0
+            
+            # Main interaction loop
+            while True:
+                # Get screen dimensions
+                try:
+                    height, width = stdscr.getmaxyx()
+                except curses.error:
+                    height, width = 25, 80  # Default size if we can't get dimensions
+                
+                # Clear screen
+                stdscr.clear()
+                
+                # Display title with colors
+                if height >= 5:
+                    try:
+                        stdscr.addstr(0, 0, "Select tracks to keep:", curses.color_pair(1) | curses.A_BOLD)
+                        stdscr.addstr(1, 0, "Use arrow keys to navigate, spacebar to select/deselect", curses.color_pair(2))
+                        stdscr.addstr(2, 0, "Enter to confirm, 'q' to quit", curses.color_pair(3))
+                    except curses.error:
+                        try:
+                            stdscr.addstr(0, 0, "Select tracks to keep:")
+                            stdscr.addstr(1, 0, "Use arrow keys to navigate, spacebar to select/deselect")
+                            stdscr.addstr(2, 0, "Enter to confirm, 'q' to quit")
+                        except curses.error:
+                            pass
+                
+                row = 4
+                
+                # Compute track window size (rows available for tracks only)
+                groups = [video_tracks, audio_tracks, subtitle_tracks]
+                group_count = sum(1 for g in groups if g)
+                rows_reserved = 4 + (2 * group_count)  # title block + per-group header/spacer
+                available_rows = max(1, height - rows_reserved)
+
+                # Visual hint if there are more tracks above the window
+                total_tracks = len(all_track_indices)
+                if scroll_offset > 0 and row < height - 3:
+                    try:
+                        stdscr.addstr(row, 0, "▲ More tracks above... ▲", curses.A_BOLD)
+                        row += 1
+                    except curses.error:
+                        pass
+
+                # Display tracks grouped by type with colors and counters
+                display_index = 0  # Flattened track index across all groups
+                if video_tracks and row < height - 5:
+                    selected_video = sum(1 for i in video_tracks if selected[i])
+                    try:
+                        stdscr.addstr(row, 0, f"Video Tracks ({selected_video}/{len(video_tracks)}):", curses.color_pair(1) | curses.A_BOLD)
+                    except curses.error:
+                        try:
+                            stdscr.addstr(row, 0, f"Video Tracks ({selected_video}/{len(video_tracks)}):", curses.A_BOLD)
+                        except curses.error:
+                            pass
+                    row += 1
+                    for idx, i in enumerate(video_tracks):
+                        # Only render items within the current scroll window
+                        global_index = display_index + idx
+                        if global_index >= scroll_offset and global_index < scroll_offset + available_rows:
+                            if row >= height - 3:
+                                break
+                            try:
+                                marker = "[*]" if selected[i] else "[ ]"
+                                highlight = ">>> " if i == all_track_indices[current_index] else "    "
+                                track_info = format_track_curses(tracks[i])
+                                display_text = f"{highlight}{marker} {i+1}. {track_info}"
+                                if len(display_text) >= width:
+                                    display_text = display_text[:width-1]
+                                stdscr.addstr(row, 0, display_text, curses.color_pair(1))
+                            except curses.error:
+                                pass
+                            row += 1
+                    row += 1
+                    # Advance flattened index by number of video tracks
+                    display_index += len(video_tracks)
+                
+                if audio_tracks and row < height - 5:
+                    selected_audio = sum(1 for i in audio_tracks if selected[i])
+                    try:
+                        stdscr.addstr(row, 0, f"Audio Tracks ({selected_audio}/{len(audio_tracks)}):", curses.color_pair(2) | curses.A_BOLD)
+                    except curses.error:
+                        try:
+                            stdscr.addstr(row, 0, f"Audio Tracks ({selected_audio}/{len(audio_tracks)}):", curses.A_BOLD)
+                        except curses.error:
+                            pass
+                    row += 1
+                    for idx, i in enumerate(audio_tracks):
+                        global_index = display_index + idx
+                        if global_index < scroll_offset:
+                            continue
+                        if global_index >= scroll_offset + available_rows:
+                            break
+                        if row >= height - 3:
+                            break
+                        try:
+                            marker = "[*]" if selected[i] else "[ ]"
+                            highlight = ">>> " if i == all_track_indices[current_index] else "    "
+                            track_info = format_track_curses(tracks[i])
+                            display_text = f"{highlight}{marker} {i+1}. {track_info}"
+                            if len(display_text) >= width:
+                                display_text = display_text[:width-1]
+                            stdscr.addstr(row, 0, display_text, curses.color_pair(2))
+                        except curses.error:
+                            pass
+                        row += 1
+                    # Advance flattened index by number of audio tracks
+                    display_index += len(audio_tracks)
+                    row += 1
+                
+                if subtitle_tracks and row < height - 5:
+                    selected_subtitles = sum(1 for i in subtitle_tracks if selected[i])
+                    try:
+                        stdscr.addstr(row, 0, f"Subtitle Tracks ({selected_subtitles}/{len(subtitle_tracks)}):", curses.color_pair(3) | curses.A_BOLD)
+                    except curses.error:
+                        try:
+                            stdscr.addstr(row, 0, f"Subtitle Tracks ({selected_subtitles}/{len(subtitle_tracks)}):", curses.A_BOLD)
+                        except curses.error:
+                            pass
+                    row += 1
+                    for idx, i in enumerate(subtitle_tracks):
+                        global_index = display_index + idx
+                        if global_index < scroll_offset:
+                            continue
+                        if global_index >= scroll_offset + available_rows:
+                            break
+                        if row >= height - 3:
+                            break
+                        try:
+                            marker = "[*]" if selected[i] else "[ ]"
+                            highlight = ">>> " if i == all_track_indices[current_index] else "    "
+                            track_info = format_track_curses(tracks[i])
+                            display_text = f"{highlight}{marker} {i+1}. {track_info}"
+                            if len(display_text) >= width:
+                                display_text = display_text[:width-1]
+                            stdscr.addstr(row, 0, display_text, curses.color_pair(3))
+                            # Color hint for SDH within the language label, hue by language
+                            if tracks[i].get("sdh"):
+                                marker_idx = display_text.rfind(" SDH]")
+                                if marker_idx != -1:
+                                    sdh_start = marker_idx + 1  # start of 'SDH'
+                                    lang = str(tracks[i].get("language", "")).lower()
+                                    if lang in ("en", "eng"):
+                                        pair = 7
+                                    elif lang in ("ar", "ara"):
+                                        pair = 8
+                                    else:
+                                        pair = 9
+                                    try:
+                                        stdscr.addstr(row, sdh_start, "SDH", curses.color_pair(pair) | curses.A_BOLD)
+                                    except curses.error:
+                                        pass
+                        except curses.error:
+                            pass
+                        row += 1
+                    # Advance flattened index by number of subtitle tracks
+                    display_index += len(subtitle_tracks)
+                    row += 1
+
+                # Visual hint if there are more tracks below the window
+                if scroll_offset + available_rows < total_tracks and row < height - 2:
+                    try:
+                        stdscr.addstr(row, 0, "▼ More tracks below... ▼", curses.A_BOLD)
+                        row += 1
+                    except curses.error:
+                        pass
+                
+                # Show selected track IDs (if we have space)
+                if row < height - 3:
+                    try:
+                        selected_ids = [tracks[i]["id"] for i in range(len(tracks)) if selected[i]]
+                        display_text = f"Currently selected track IDs: {selected_ids}"
+                        if len(display_text) >= width:
+                            display_text = display_text[:width-1]
+                        stdscr.addstr(row, 0, display_text)
+                        row += 1
+                    except curses.error:
+                        pass
+                
+                # Show instructions (if we have space)
+                if row < height - 1:
+                    try:
+                        display_text = (
+                            "Controls: ↑/↓ Navigate, Space Toggle, s/S Deselect Others-in-Type, Enter Confirm, Q Quit"
+                        )
+                        if len(display_text) >= width:
+                            display_text = display_text[:width-1]
+                        stdscr.addstr(row, 0, display_text)
+                    except curses.error:
+                        pass
+                
+                # Refresh screen
+                try:
+                    stdscr.refresh()
+                except curses.error:
+                    pass
+                
+                # Get user input
+                try:
+                    key = stdscr.getch()
+                except curses.error:
+                    key = -1
+                
+                if key == curses.KEY_UP:  # Up arrow
+                    if current_index > 0:
+                        current_index -= 1
+                    # Adjust scroll to keep selection visible
+                    if current_index < scroll_offset:
+                        scroll_offset = current_index
+                elif key == curses.KEY_DOWN:  # Down arrow
+                    if current_index < len(all_track_indices) - 1:
+                        current_index += 1
+                    # Adjust scroll to keep selection visible
+                    if current_index >= scroll_offset + available_rows:
+                        scroll_offset = max(0, current_index - available_rows + 1)
+                elif key == ord(' '):  # Spacebar
+                    # Toggle the selection of the current track
+                    track_index = all_track_indices[current_index]
+                    selected[track_index] = not selected[track_index]
+                elif key in (ord('s'), ord('S')):  # S/s: deselect others of same type
+                    track_index = all_track_indices[current_index]
+                    track_type = tracks[track_index]["type"]
+                    for i, tr in enumerate(tracks):
+                        if tr["type"] == track_type and i != track_index:
+                            selected[i] = False
+                elif key == ord('\n') or key == curses.KEY_ENTER:  # Enter
+                    break
+                elif key == ord('q') or key == ord('Q'):  # 'q' or 'Q' quits program
+                    return QUIT
+                    
+        except Exception:
+            # If curses fails, fall back to simple method
+            return select_tracks_simple(tracks)
+        
+        # Return list of selected track IDs
+        return [tracks[i]["id"] for i in range(len(tracks)) if selected[i]]
+    
+    # Run the curses application
+    try:
+        return curses.wrapper(curses_main)
+    except Exception:
+        # If curses fails, fall back to simple method
+        return select_tracks_simple(tracks)
+
+
+def select_tracks_simple(tracks):
+    """
+    Simple interactive wizard for selecting tracks to keep (fallback method)
+    """
+    print(f"\n{Fore.CYAN}{Style.BRIGHT}Select tracks to keep:{Style.RESET_ALL}")
+    print("Enter track numbers separated by spaces to select/deselect them, 'q' to quit, or 'done' to finish:")
+    
+    # Create a list to track which tracks are selected
+    selected = [True] * len(tracks)  # By default, keep all tracks
+    
+    # Group tracks by type for better display
+    video_tracks = [i for i, track in enumerate(tracks) if track["type"] == "video"]
+    audio_tracks = [i for i, track in enumerate(tracks) if track["type"] == "audio"]
+    subtitle_tracks = [i for i, track in enumerate(tracks) if track["type"] == "subtitles"]
+    
+    while True:
+        # Display tracks grouped by type with counters
+        if video_tracks:
+            selected_video = sum(1 for i in video_tracks if selected[i])
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}Video Tracks ({selected_video}/{len(video_tracks)}):{Style.RESET_ALL}")
+            for i in video_tracks:
+                marker = f"{Fore.GREEN}[*]{Style.RESET_ALL}" if selected[i] else f"{Fore.RED}[ ]{Style.RESET_ALL}"
+                track_info = format_track_info(tracks[i])
+                print(f"  {marker} {i+1}. {track_info}")
+        
+        if audio_tracks:
+            selected_audio = sum(1 for i in audio_tracks if selected[i])
+            print(f"\n{Fore.GREEN}{Style.BRIGHT}Audio Tracks ({selected_audio}/{len(audio_tracks)}):{Style.RESET_ALL}")
+            for i in audio_tracks:
+                marker = f"{Fore.GREEN}[*]{Style.RESET_ALL}" if selected[i] else f"{Fore.RED}[ ]{Style.RESET_ALL}"
+                track_info = format_track_info(tracks[i])
+                print(f"  {marker} {i+1}. {track_info}")
+        
+        if subtitle_tracks:
+            selected_subtitles = sum(1 for i in subtitle_tracks if selected[i])
+            print(f"\n{Fore.YELLOW}{Style.BRIGHT}Subtitle Tracks ({selected_subtitles}/{len(subtitle_tracks)}):{Style.RESET_ALL}")
+            for i in subtitle_tracks:
+                marker = f"{Fore.GREEN}[*]{Style.RESET_ALL}" if selected[i] else f"{Fore.RED}[ ]{Style.RESET_ALL}"
+                track_info = format_track_info(tracks[i])
+                print(f"  {marker} {i+1}. {track_info}")
+        
+        # Show selected track IDs
+        selected_ids = [tracks[i]["id"] for i in range(len(tracks)) if selected[i]]
+        print(f"\n{Fore.WHITE}Currently selected track IDs: {Fore.GREEN}{selected_ids}{Style.RESET_ALL}")
+        
+        # Get user input with error handling
+        try:
+            user_input = input(f"\n{Fore.WHITE}Enter track numbers to toggle (e.g., '1 3 5'), 'q' to quit, or 'done': {Style.RESET_ALL}").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n{Fore.YELLOW}Operation cancelled by user{Style.RESET_ALL}")
+            return None
+        
+        if user_input.lower() == 'done':
+            break
+        elif user_input.lower() == 'q':
+            print(f"{Fore.YELLOW}Operation cancelled by user{Style.RESET_ALL}")
+            return QUIT
+            
+        # Parse track numbers
+        track_numbers = user_input.split()
+        for num_str in track_numbers:
+            try:
+                num = int(num_str)
+                if 1 <= num <= len(tracks):
+                    # Toggle the selection (0-based index)
+                    selected[num-1] = not selected[num-1]
+                    print(f"  {Fore.GREEN}Toggled track {num}{Style.RESET_ALL}")
+                else:
+                    print(f"  {Fore.RED}Invalid track number: {num}{Style.RESET_ALL}")
+            except ValueError:
+                print(f"  {Fore.RED}Invalid input: {num_str}{Style.RESET_ALL}")
+    
+    # Return list of selected track IDs
+    return [tracks[i]["id"] for i in range(len(tracks)) if selected[i]]
+
+
+def process_files(file_analyses, selected_track_ids):
+    """
+    Process files to create new versions with only selected tracks
+    Ensure the first selected track of each type becomes the default
+    """
+    print(f"\n{Fore.CYAN}Processing files...{Style.RESET_ALL}")
+    
+    # Categorize selected tracks by type for proper mkvmerge syntax
+    video_tracks = []
+    audio_tracks = []
+    subtitle_tracks = []
+    
+    # We'll need to get track types from the first file's analysis
+    if file_analyses:
+        first_file_tracks = file_analyses[0]["tracks"]
+        track_type_map = {track["id"]: track["type"] for track in first_file_tracks}
+        
+        for track_id in selected_track_ids:
+            track_type = track_type_map.get(track_id, "unknown")
+            if track_type == "video":
+                video_tracks.append(str(track_id))
+            elif track_type == "audio":
+                audio_tracks.append(str(track_id))
+            elif track_type == "subtitles":
+                subtitle_tracks.append(str(track_id))
+    
+    for file_analysis in file_analyses:
+        file_path = file_analysis["file_path"]
+        file_name = file_analysis["file_name"]
+        
+        print(f"{Fore.WHITE}Processing {Fore.YELLOW}{file_name}{Fore.WHITE}...{Style.RESET_ALL}")
+        
+        # Create output file name (add .new before .mkv extension)
+        output_path = file_path.replace(".mkv", ".new.mkv")
+        
+        # Build mkvmerge command
+        cmd = ["mkvmerge", "-o", output_path]
+        
+        # Add track selection options
+        if video_tracks:
+            cmd.extend(["-d", ",".join(video_tracks)])
+            # Set first video track as default
+            cmd.extend(["--default-track", f"{video_tracks[0]}:1"])
+        else:
+            cmd.append("-D")  # No video tracks
+            
+        if audio_tracks:
+            cmd.extend(["-a", ",".join(audio_tracks)])
+            # Set first audio track as default
+            cmd.extend(["--default-track", f"{audio_tracks[0]}:1"])
+        else:
+            cmd.append("-A")  # No audio tracks
+            
+        if subtitle_tracks:
+            cmd.extend(["-s", ",".join(subtitle_tracks)])
+            # Set first subtitle track as default and forced
+            cmd.extend(["--default-track", f"{subtitle_tracks[0]}:1"])
+            cmd.extend(["--forced-track", f"{subtitle_tracks[0]}:1"])
+        else:
+            cmd.append("-S")  # No subtitle tracks
+        
+        # Add the input file
+        cmd.append(file_path)
+        
+        # Show command for debugging
+        print(f"  {Fore.WHITE}Command: {' '.join(cmd)}{Style.RESET_ALL}")
+        
+        # Run the command
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
+            if result.returncode == 0:
+                print(f"  {Fore.GREEN}Successfully created {output_path}{Style.RESET_ALL}")
+            else:
+                print(f"  {Fore.RED}Error processing {file_name}{Style.RESET_ALL}")
+                if result.stderr:
+                    print(f"    {Fore.RED}Error details: {result.stderr[:200]}...{Style.RESET_ALL}")
+                print(f"    {Fore.RED}Return code: {result.returncode}{Style.RESET_ALL}")
+        except subprocess.TimeoutExpired:
+            print(f"  {Fore.RED}Error processing {file_name}: Command timed out{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"  {Fore.RED}Error processing {file_name}: {e}{Style.RESET_ALL}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Moxy - MKV Track Selection Wizard")
+    parser.add_argument("directory", nargs="?", default=".", 
+                        help="Directory containing MKV files (default: current directory)")
+    
+    args = parser.parse_args()
+    
+    print(f"{Fore.CYAN}{Style.BRIGHT}Welcome to Moxy - MKV Track Selection Wizard{Style.RESET_ALL}")
+    print(f"{Fore.WHITE}Scanning directory: {Fore.GREEN}{args.directory}{Style.RESET_ALL}")
+    
+    # Scan for MKV files
+    mkv_files = scan_directory(args.directory)
+    
+    if not mkv_files:
+        print(f"{Fore.RED}No MKV files found in the directory{Style.RESET_ALL}")
+        return
+    
+    print(f"{Fore.WHITE}Found {Fore.GREEN}{len(mkv_files)}{Fore.WHITE} MKV files:{Style.RESET_ALL}")
+    for i, file_path in enumerate(mkv_files, 1):
+        print(f"  {Fore.WHITE}{i}. {Fore.YELLOW}{file_path.name}{Style.RESET_ALL}")
+    
+    # Analyze each MKV file
+    print(f"\n{Fore.CYAN}Analyzing MKV files...{Style.RESET_ALL}")
+    file_analyses = []
+    
+    for file_path in mkv_files:
+        print(f"{Fore.WHITE}Analyzing {Fore.YELLOW}{file_path.name}{Fore.WHITE}...{Style.RESET_ALL}")
+        analysis = analyze_mkv_file(file_path)
+        if analysis:
+            file_analyses.append(analysis)
+        else:
+            print(f"{Fore.RED}Failed to analyze {file_path.name}{Style.RESET_ALL}")
+    
+    if not file_analyses:
+        print(f"{Fore.RED}Failed to analyze any files{Style.RESET_ALL}")
+        return
+    
+    # Group files by track structure
+    file_groups = group_files_by_track_structure(file_analyses)
+    
+    print(f"\n{Fore.WHITE}Found {len(file_groups)} group(s) of files with identical track structures:{Style.RESET_ALL}")
+    for i, group in enumerate(file_groups):
+        print(f"  {Fore.CYAN}Group {i+1}:{Style.RESET_ALL} {len(group)} file(s)")
+        for file_analysis in group:
+            print(f"    {Fore.YELLOW}{file_analysis['file_name']}{Style.RESET_ALL}")
+    
+    # Process each group
+    for i, group in enumerate(file_groups):
+        if len(group) == 1:
+            print(f"\n{Fore.YELLOW}Processing individual file (unique track structure):{Style.RESET_ALL}")
+            file_analysis = group[0]
+            print(f"{Fore.CYAN}{file_analysis['file_name']}{Style.RESET_ALL}")
+            
+            # Get track selection for this file
+            tracks = file_analysis["tracks"]
+            selected_track_ids = select_tracks_interactive(tracks)
+            
+            if selected_track_ids is QUIT:
+                print(f"{Fore.YELLOW}Quit requested. Exiting.{Style.RESET_ALL}")
+                return
+            elif selected_track_ids is not None:
+                print(f"\n{Fore.WHITE}Selected tracks: {Fore.GREEN}{selected_track_ids}{Style.RESET_ALL}")
+                # Process this file
+                process_files([file_analysis], selected_track_ids)
+            else:
+                print(f"{Fore.YELLOW}Skipping this file.{Style.RESET_ALL}")
+        else:
+            print(f"\n{Fore.GREEN}{Style.BRIGHT}Processing batch of {len(group)} files with identical track structures!{Style.RESET_ALL}")
+            
+            # Display tracks from the first file in the group
+            tracks = group[0]["tracks"]
+            print(f"{Fore.WHITE}Displaying track information for the first file:{Style.RESET_ALL}")
+            
+            # Get track selection ONCE for all files in this group
+            selected_track_ids = select_tracks_interactive(tracks)
+            
+            if selected_track_ids is QUIT:
+                print(f"{Fore.YELLOW}Quit requested. Exiting.{Style.RESET_ALL}")
+                return
+            elif selected_track_ids is not None:
+                print(f"\n{Fore.WHITE}Selected tracks: {Fore.GREEN}{selected_track_ids}{Style.RESET_ALL}")
+                # Process ALL files in this group with the SAME selection
+                process_files(group, selected_track_ids)
+                print(f"{Fore.GREEN}{Style.BRIGHT}Batch processed successfully!{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}No selection made for this batch. Skipping.{Style.RESET_ALL}")
+
+
+if __name__ == "__main__":
+    main()
