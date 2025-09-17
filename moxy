@@ -566,7 +566,7 @@ def select_tracks_interactive(tracks):
                 if row < height - 1:
                     try:
                         display_text = (
-                            "Controls: ↑/↓ Navigate, Space Toggle, s/S Deselect Others-in-Type, Enter Confirm, Q Quit"
+                            "Controls: ↑/↓ Navigate, Space Toggle, O Deselect Others-in-Type, S Skip Batch, Enter Confirm, Q Quit"
                         )
                         if len(display_text) >= width:
                             display_text = display_text[:width-1]
@@ -602,12 +602,14 @@ def select_tracks_interactive(tracks):
                     # Toggle the selection of the current track
                     track_index = all_track_indices[current_index]
                     selected[track_index] = not selected[track_index]
-                elif key in (ord('s'), ord('S')):  # S/s: deselect others of same type
+                elif key in (ord('o'), ord('O')):  # O: deselect others of same type
                     track_index = all_track_indices[current_index]
                     track_type = tracks[track_index]["type"]
                     for i, tr in enumerate(tracks):
                         if tr["type"] == track_type and i != track_index:
                             selected[i] = False
+                elif key in (ord('s'), ord('S')):  # S: skip batch
+                    return None  # Return None to indicate skip
                 elif key == ord('\n') or key == curses.KEY_ENTER:  # Enter
                     break
                 elif key == ord('q') or key == ord('Q'):  # 'q' or 'Q' quits program
@@ -633,7 +635,7 @@ def select_tracks_simple(tracks):
     Simple interactive wizard for selecting tracks to keep (fallback method)
     """
     print(f"\n{Fore.CYAN}{Style.BRIGHT}Select tracks to keep:{Style.RESET_ALL}")
-    print("Enter track numbers separated by spaces to select/deselect them, 'q' to quit, or 'done' to finish:")
+    print("Enter track numbers separated by spaces to select/deselect them, 'q' to quit, 's' to skip batch, or 'done' to finish:")
     
     # Create a list to track which tracks are selected
     selected = [True] * len(tracks)  # By default, keep all tracks
@@ -675,7 +677,7 @@ def select_tracks_simple(tracks):
         
         # Get user input with error handling
         try:
-            user_input = input(f"\n{Fore.WHITE}Enter track numbers to toggle (e.g., '1 3 5'), 'q' to quit, or 'done': {Style.RESET_ALL}").strip()
+            user_input = input(f"\n{Fore.WHITE}Enter track numbers to toggle (e.g., '1 3 5'), 'q' to quit, 's' to skip batch, or 'done': {Style.RESET_ALL}").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n{Fore.YELLOW}Operation cancelled by user{Style.RESET_ALL}")
             return None
@@ -685,6 +687,9 @@ def select_tracks_simple(tracks):
         elif user_input.lower() == 'q':
             print(f"{Fore.YELLOW}Operation cancelled by user{Style.RESET_ALL}")
             return QUIT
+        elif user_input.lower() == 's':
+            print(f"{Fore.YELLOW}Skipping batch{Style.RESET_ALL}")
+            return None
             
         # Parse track numbers
         track_numbers = user_input.split()
@@ -853,6 +858,10 @@ def main():
                 process_files([file_analysis], selected_track_ids)
             else:
                 print(f"{Fore.YELLOW}Skipping this file.{Style.RESET_ALL}")
+                # Check if this is the last batch and there are no more batches
+                if i == len(file_groups) - 1:
+                    print(f"{Fore.YELLOW}No more files. Exiting.{Style.RESET_ALL}")
+                    return
         else:
             print(f"\n{Fore.GREEN}{Style.BRIGHT}Processing batch of {len(group)} files with identical track structures!{Style.RESET_ALL}")
             
@@ -872,7 +881,11 @@ def main():
                 process_files(group, selected_track_ids)
                 print(f"{Fore.GREEN}{Style.BRIGHT}Batch processed successfully!{Style.RESET_ALL}")
             else:
-                print(f"{Fore.YELLOW}No selection made for this batch. Skipping.{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}Skipping this batch.{Style.RESET_ALL}")
+                # Check if this is the last batch and there are no more batches
+                if i == len(file_groups) - 1:
+                    print(f"{Fore.YELLOW}No more batches. Exiting.{Style.RESET_ALL}")
+                    return
 
 
 if __name__ == "__main__":
