@@ -1,4 +1,6 @@
-# VPT
+# VideoSmaller
+
+Just a collection of video tools to make videos smaller, theyre ultra niche?? but I use them regularly so maybe there are other weirdos out there that might find them useful.
 
 ## Moxy
 Remove unneeded tracks in MKV files
