@@ -1,6 +1,6 @@
 # VideoSmaller
 
-Just a collection of video tools to make videos smaller, theyre ultra niche?? but I use them regularly so maybe there are other weirdos out there that might find them useful.
+Just a collection of ultra niche video tools to make videos smaller. but I use them regularly so maybe there are other weirdos out there that might find them useful.
 
 ## Moxy
 Batch remove unneeded tracks in MKV files it detects files that have similar tracks so it only asks you once.
