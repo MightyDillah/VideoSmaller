@@ -1,26 +1,42 @@
 #!/bin/bash
 
 # Script to install/update Vincon video processing tools
-# Detects OS and performs appropriate installation
+# Uses selection menu for OS choice
 
 echo "Vincon Video Processing Tools Installation/Update Script"
 echo "======================================================"
 
-# Detect OS
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    OS="macOS"
-    INSTALL_CMD="sudo cp"
-    INSTALL_PATH="/usr/local/bin"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS="Linux"
-    INSTALL_CMD="sudo cp"
-    INSTALL_PATH="/usr/local/bin"
-else
-    echo "Unsupported OS: $OSTYPE"
-    exit 1
-fi
+# Selection menu for OS
+echo "Please select your operating system:"
+echo "1) Linux"
+echo "2) macOS"
+echo "3) Exit"
+echo ""
+printf "Enter your choice (1-3): "
+read OS_CHOICE
 
-echo "Detected OS: $OS"
+case $OS_CHOICE in
+    1)
+        OS="Linux"
+        INSTALL_CMD="sudo cp"
+        INSTALL_PATH="/usr/local/bin"
+        ;;
+    2)
+        OS="macOS"
+        INSTALL_CMD="sudo cp"
+        INSTALL_PATH="/usr/local/bin"
+        ;;
+    3)
+        echo "Installation cancelled."
+        exit 0
+        ;;
+    *)
+        echo "Invalid choice. Installation cancelled."
+        exit 1
+        ;;
+esac
+
+echo "Selected OS: $OS"
 echo ""
 
 # Check if running from the correct directory
@@ -29,15 +45,24 @@ if [ ! -f "vincon" ] || [ ! -f "moxy" ] || [ ! -f "shorty" ] || [ ! -f "README.m
     exit 1
 fi
 
+# Check if required tools exist and are readable
+for tool in vincon moxy shorty; do
+    if [ ! -r "$tool" ]; then
+        echo "Error: Required file '$tool' not found or not readable in current directory."
+        exit 1
+    fi
+done
+
 echo "The following commands will be executed:"
 echo "  chmod +x vincon && $INSTALL_CMD vincon $INSTALL_PATH/vincon"
 echo "  chmod +x moxy && $INSTALL_CMD moxy $INSTALL_PATH/moxy"
 echo "  chmod +x shorty && $INSTALL_CMD shorty $INSTALL_PATH/shorty"
 echo ""
 
-read -p "Do you want to proceed with installation? (y/N): " -n 1 -r
+printf "Do you want to proceed with installation? (y/N): "
+read REPLY
 echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+if [ ! "$REPLY" = "y" ] && [ ! "$REPLY" = "Y" ]; then
     echo "Installation cancelled."
     exit 0
 fi
@@ -48,31 +73,31 @@ echo ""
 
 # Install each tool
 echo "Installing vincon..."
-chmod +x vincon && $INSTALL_CMD vincon $INSTALL_PATH/vincon
-if [ $? -eq 0 ]; then
+if chmod +x vincon && $INSTALL_CMD vincon $INSTALL_PATH/vincon; then
     echo "✓ vincon installed/updated successfully"
 else
     echo "✗ Failed to install/update vincon"
+    exit 1
 fi
 
 echo ""
 
 echo "Installing moxy..."
-chmod +x moxy && $INSTALL_CMD moxy $INSTALL_PATH/moxy
-if [ $? -eq 0 ]; then
+if chmod +x moxy && $INSTALL_CMD moxy $INSTALL_PATH/moxy; then
     echo "✓ moxy installed/updated successfully"
 else
     echo "✗ Failed to install/update moxy"
+    exit 1
 fi
 
 echo ""
 
 echo "Installing shorty..."
-chmod +x shorty && $INSTALL_CMD shorty $INSTALL_PATH/shorty
-if [ $? -eq 0 ]; then
+if chmod +x shorty && $INSTALL_CMD shorty $INSTALL_PATH/shorty; then
     echo "✓ shorty installed/updated successfully"
 else
     echo "✗ Failed to install/update shorty"
+    exit 1
 fi
 
 echo ""
