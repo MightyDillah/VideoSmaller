@@ -90,7 +90,7 @@ $sourceDir = Get-Location
 $installDir = "$env:LOCALAPPDATA\VideoSmaller"
 
 # Check if this script is run from the correct directory
-$scriptFiles = @("vincon", "moxy", "shorty", "tracksize")
+$scriptFiles = @("vincon", "moxy", "shorty")
 $missingFiles = @()
 
 foreach ($file in $scriptFiles) {
@@ -130,7 +130,6 @@ $batchScripts = @{
     "vincon.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\vincon.py`" %*`npopd"
     "moxy.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\moxy.py`" %*`npopd"
     "shorty.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\shorty.py`" %*`npopd"
-    "tracksize.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\tracksize.py`" %*`npopd"
 }
 
 foreach ($batchFile in $batchScripts.GetEnumerator()) {
@@ -174,7 +173,6 @@ $aliases = @"
 Set-Alias -Name vincon -Value "$installDir\vincon.py"
 Set-Alias -Name moxy -Value "$installDir\moxy.py" 
 Set-Alias -Name shorty -Value "$installDir\shorty.py"
-Set-Alias -Name tracksize -Value "$installDir\tracksize.py"
 "@
 
 # Check if profile already contains VideoSmaller aliases
@@ -206,7 +204,7 @@ Write-Host "You can now use the tools from anywhere in your system:" -Foreground
 Write-Host "  vincon C:\path\to\videos" -ForegroundColor Cyan
 Write-Host "  moxy C:\path\to\mkv\files" -ForegroundColor Cyan
 Write-Host "  shorty '3:10' video.mp4" -ForegroundColor Cyan
-Write-Host "  tracksize video.mkv" -ForegroundColor Cyan
+
 
 Write-Host "`nNote: You may need to restart your command prompt or PowerShell for PATH changes to take effect." -ForegroundColor Yellow
 Write-Host "The PowerShell aliases will be available in new PowerShell sessions." -ForegroundColor Yellow
