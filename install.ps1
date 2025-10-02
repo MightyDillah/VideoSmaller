@@ -22,12 +22,14 @@ function Test-CommandExists {
 
 # Check for Python
 Write-Host "`nChecking for Python..." -ForegroundColor Yellow
-if (Test-CommandExists "python") {
-    Write-Host "Python found: $(python --version)" -ForegroundColor Green
-} elseif (Test-CommandExists "python3") {
+if (Test-CommandExists "python3") {
     Write-Host "Python3 found: $(python3 --version)" -ForegroundColor Green
-    # Create an alias for python to python3
-    Set-Alias python python3
+    # Create an alias for python to python3 for compatibility
+    if (-not (Test-CommandExists "python")) {
+        Set-Alias python python3
+    }
+} elseif (Test-CommandExists "python") {
+    Write-Host "Python found: $(python --version)" -ForegroundColor Green
 } else {
     Write-Host "Python not found. Please install Python before continuing." -ForegroundColor Red
     Read-Host "Press any key to exit"
@@ -46,43 +48,23 @@ foreach ($tool in $requiredTools) {
     }
 }
 
-# Install missing tools using winget
+# Check for missing tools and warn user
 if ($missingTools.Count -gt 0) {
     Write-Host "`nThe following required tools are missing:" -ForegroundColor Yellow
     foreach ($tool in $missingTools) {
         Write-Host "  - $tool" -ForegroundColor Red
     }
 
-    $install = Read-Host "`nWould you like to install them using winget? (Y/N)"
-    if ($install -eq 'Y' -or $install -eq 'y') {
-        foreach ($tool in $missingTools) {
-            Write-Host "`nInstalling $tool..." -ForegroundColor Yellow
-            
-            try {
-                switch ($tool) {
-                    "ffmpeg" {
-                        $result = winget install --id "Gyan.FFmpeg" --exact --source winget --accept-source-agreements --disable-interactivity --silent --accept-package-agreements --force
-                    }
-                    "mkvmerge" {
-                        $result = winget install --id "MKVToolNix.MKVToolNix" --exact --source winget --accept-source-agreements --disable-interactivity --silent --accept-package-agreements --force
-                    }
-                    "mediainfo" {
-                        $result = winget install --id "MediaArea.MediaInfo" --exact --source winget --accept-source-agreements --disable-interactivity --silent --accept-package-agreements --force
-                    }
-                }
-                
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "$tool installed successfully" -ForegroundColor Green
-                } else {
-                    Write-Host "Failed to install $tool. Please install manually." -ForegroundColor Red
-                }
-            } catch {
-                Write-Host "Error installing $tool`: $($_.Exception.Message)" -ForegroundColor Red
-            }
-        }
-    } else {
-        Write-Host "Some tools are missing. Please install them manually before proceeding." -ForegroundColor Yellow
-    }
+    Write-Host "`nPlease install the missing tools manually:" -ForegroundColor Yellow
+    Write-Host "  - FFmpeg: https://www.gyan.dev/ffmpeg/builds/" -ForegroundColor White
+    Write-Host "  - MKVToolNix: https://www.fosshub.com/MKVToolNix.html" -ForegroundColor White  
+    Write-Host "  - MediaInfo: https://mediaarea.net/en/MediaInfo" -ForegroundColor White
+    Write-Host "`nAfter installing, please restart this script." -ForegroundColor Yellow
+    
+    Read-Host "Press any key to exit"
+    exit 1
+} else {
+    Write-Host "`nAll required tools are installed." -ForegroundColor Green
 }
 
 # Define source and destination directories
@@ -167,35 +149,36 @@ if (-not (Test-Path $profileDir)) {
     Write-Host "Created PowerShell profile directory: $profileDir" -ForegroundColor Green
 }
 
-# Define aliases
-$aliases = @"
+# Define the aliases to add
+$newAliases = @"
 # VideoSmaller tools aliases
 Set-Alias -Name vincon -Value "$installDir\vincon.py"
 Set-Alias -Name moxy -Value "$installDir\moxy.py" 
 Set-Alias -Name shorty -Value "$installDir\shorty.py"
 "@
 
-# Check if profile already contains VideoSmaller aliases
+# Read current profile content
 $profileExists = Test-Path $PROFILE
 $currentProfile = if ($profileExists) { Get-Content $PROFILE -Raw } else { "" }
 
-if ($currentProfile -match "VideoSmaller tools aliases") {
-    Write-Host "VideoSmaller aliases already exist in profile" -ForegroundColor Yellow
+# Check if profile already contains VideoSmaller aliases
+if ($currentProfile -match "# VideoSmaller tools aliases") {
+    Write-Host "VideoSmaller aliases already exist in profile, skipping..." -ForegroundColor Yellow
 } else {
     # Append aliases to profile
     if ($currentProfile) {
-        $currentProfile += "`n`n" + $aliases
+        $newProfileContent = $currentProfile + "`n`n" + $newAliases
     } else {
-        $currentProfile = $aliases
+        $newProfileContent = $newAliases
     }
     
     try {
-        $currentProfile | Out-File -FilePath $PROFILE -Encoding UTF8
+        $newProfileContent | Out-File -FilePath $PROFILE -Encoding UTF8
         Write-Host "Successfully added aliases to PowerShell profile: $PROFILE" -ForegroundColor Green
     } catch {
         Write-Host "Failed to update PowerShell profile`: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "You can manually add these aliases to your profile:" -ForegroundColor Yellow
-        Write-Host $aliases -ForegroundColor White
+        Write-Host $newAliases -ForegroundColor White
     }
 }
 
