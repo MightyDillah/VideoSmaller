@@ -7,7 +7,7 @@ Batch remove unneeded tracks in MKV files it detects files that have similar tra
 moxy /path/to/mkv/files
 
 ## Vincon
-Batch convert videos to HEVC using Apple VideoToolbox, it detects old format videos like avi or mpeg and matches their bitrate then converts them to mp4
+Batch convert videos to HEVC using the best available hardware encoder (Apple VideoToolbox, AMD AMF, NVIDIA NVENC, or Intel QSV), it detects old format videos like avi or mpeg and matches their bitrate then converts them to mp4
 vincon /path/to/videos
 
 ## Shorty
