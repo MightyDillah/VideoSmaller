@@ -4,19 +4,31 @@ Just a collection of ultra niche video tools to make videos smaller. but I use t
 
 ## Moxy
 Batch remove unneeded tracks in MKV files it detects files that have similar tracks so it only asks you once.
-moxy /path/to/mkv/files
+
+Usage examples:
+  Unix: moxy /path/to/mkv/files
+  Windows: moxy .  (for current directory)
+           moxy C:\path\to\mkv\files
 
 ## Vincon
 Batch convert videos to HEVC using the best available hardware encoder (Apple VideoToolbox, AMD AMF, NVIDIA NVENC, or Intel QSV), it detects old format videos like avi or mpeg and matches their bitrate then converts them to mp4
+
+Usage examples:
+  Unix: vincon /path/to/videos
+  Windows: vincon .  (for current directory)
+           vincon C:\path\to\videos
 vincon /path/to/videos
 
 ## Shorty
 Trim MP4/MKV without re-encoding using specific scenarios, very useful if you just want to remove x seconds or minutes from a video without the drama
-shorty '3:10' video.mp4
-shorty 'h1:30:00' video.mp4
-shorty '3:10-3:15' video.mp4
-shorty 'h1:20:00-h1:25:00' video.mp4
-shorty '-90' video.mp4
+
+Usage examples:
+  Unix: shorty '3:10' video.mp4
+  Windows: shorty '3:10' video.mp4
+           shorty 'h1:30:00' video.mp4
+           shorty '3:10-3:15' video.mp4
+           shorty 'h1:20:00-h1:25:00' video.mp4
+           shorty '-90' video.mp4
 
 ## Tracksize
 Shows a list of all tracks in an MKV file sorted by size, with human-readable formatting (KB, MB, GB)
@@ -35,6 +47,13 @@ note: you also need python3, but i wont get into that here you should already ha
 
    brew install ffmpeg mkvtoolnix
 
+  Windows:
+   - Install Python 3 from https://python.org
+   - Install required tools manually:
+     - FFmpeg: https://www.gyan.dev/ffmpeg/builds/
+     - MKVToolNix: https://www.fosshub.com/MKVToolNix.html
+     - MediaInfo: https://mediaarea.net/en/MediaInfo
+
 ### Installation Methods:
 
 #### Unix-like systems (Linux/macOS) - Automated:
@@ -47,18 +66,20 @@ chmod +x shorty && sudo cp shorty /usr/local/bin/shorty
 chmod +x tracksize && sudo cp tracksize /usr/local/bin/tracksize
 
 #### Windows - Automated:
-Run PowerShell as Administrator and execute:
-.\install.ps1
+1. Install Python 3 from https://python.org
+2. Run PowerShell as Administrator
+3. Navigate to the VideoSmaller directory
+4. Execute: .\install.ps1
 
 This will:
-- Check for and install required dependencies using winget (if missing)
+- Check for Python and required tools
 - Copy the scripts to a local directory
+- Create batch files for easy access from Command Prompt
 - Add the directory to your PATH environment variable
-- Add aliases to your PowerShell profile for easy access
+- Add PowerShell functions to your profile for easy access
 
 #### Windows - Manual:
-Run PowerShell as Administrator and execute:
-.\install.ps1
+Run PowerShell as Administrator and execute: .\install.ps1
 
 This will:
 - Check for and install required dependencies using winget (if missing)
