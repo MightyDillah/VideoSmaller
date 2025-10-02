@@ -61,13 +61,13 @@ if ($missingTools.Count -gt 0) {
             try {
                 switch ($tool) {
                     "ffmpeg" {
-                        $result = winget install Gyan.FFmpeg -e
+                        $result = winget install --id "Gyan.FFmpeg" --exact --source winget --accept-source-agreements --disable-interactivity --silent --accept-package-agreements --force
                     }
                     "mkvmerge" {
-                        $result = winget install MKVToolNix.MKVToolNix -e
+                        $result = winget install --id "MKVToolNix.MKVToolNix" --exact --source winget --accept-source-agreements --disable-interactivity --silent --accept-package-agreements --force
                     }
                     "mediainfo" {
-                        $result = winget install MediaArea.MediaInfo -e
+                        $result = winget install --id "MediaArea.MediaInfo" --exact --source winget --accept-source-agreements --disable-interactivity --silent --accept-package-agreements --force
                     }
                 }
                 
