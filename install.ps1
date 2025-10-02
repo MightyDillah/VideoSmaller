@@ -77,7 +77,7 @@ if ($missingTools.Count -gt 0) {
                     Write-Host "Failed to install $tool. Please install manually." -ForegroundColor Red
                 }
             } catch {
-                Write-Host "Error installing $tool: $_" -ForegroundColor Red
+                Write-Host "Error installing $tool`: $($_.Exception.Message)" -ForegroundColor Red
             }
         }
     } else {
@@ -152,7 +152,7 @@ if ($userPath -split ';' -notcontains $installDir) {
         # Update current session PATH as well
         $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
     } catch {
-        Write-Host "Failed to add to PATH: $_" -ForegroundColor Red
+        Write-Host "Failed to add to PATH`: $($_.Exception.Message)" -ForegroundColor Red
     }
 } else {
     Write-Host "`n$installDir is already in PATH" -ForegroundColor Green
@@ -195,7 +195,7 @@ if ($currentProfile -match "VideoSmaller tools aliases") {
         $currentProfile | Out-File -FilePath $PROFILE -Encoding UTF8
         Write-Host "Successfully added aliases to PowerShell profile: $PROFILE" -ForegroundColor Green
     } catch {
-        Write-Host "Failed to update PowerShell profile: $_" -ForegroundColor Red
+        Write-Host "Failed to update PowerShell profile`: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host "You can manually add these aliases to your profile:" -ForegroundColor Yellow
         Write-Host $aliases -ForegroundColor White
     }
