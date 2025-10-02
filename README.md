@@ -18,6 +18,10 @@ shorty '3:10-3:15' video.mp4
 shorty 'h1:20:00-h1:25:00' video.mp4
 shorty '-90' video.mp4
 
+## Tracksize
+Shows a list of all tracks in an MKV file sorted by size, with human-readable formatting (KB, MB, GB)
+tracksize video.mkv
+
 ## Install
 note: you also need python3, but i wont get into that here you should already have it anyway.
 
@@ -26,26 +30,38 @@ note: you also need python3, but i wont get into that here you should already ha
 
    sudo apt update
    sudo apt install ffmpeg mkvtoolnix
-   pip3 install colorama
 
   macOS (brew):
 
    brew install ffmpeg mkvtoolnix
-   pip3 install colorama
 
-### Automated Installation:
-This just installs everything for you, where theyre suppose to go.
+### Installation Methods:
 
+#### Unix-like systems (Linux/macOS) - Automated:
 chmod +x update_vincon.sh && ./update_vincon.sh
 
-### Manual Installation:
-
-#### macOS:
+#### Unix-like systems (Linux/macOS) - Manual:
 chmod +x vincon && sudo cp vincon /usr/local/bin/vincon
 chmod +x moxy && sudo cp moxy /usr/local/bin/moxy
 chmod +x shorty && sudo cp shorty /usr/local/bin/shorty
+chmod +x tracksize && sudo cp tracksize /usr/local/bin/tracksize
 
-#### Linux:
-chmod +x vincon && sudo cp vincon /usr/local/bin/vincon
-chmod +x moxy && sudo cp moxy /usr/local/bin/moxy
-chmod +x shorty && sudo cp shorty /usr/local/bin/shorty
+#### Windows - Automated:
+Run PowerShell as Administrator and execute:
+.\install.ps1
+
+This will:
+- Check for and install required dependencies using winget (if missing)
+- Copy the scripts to a local directory
+- Add the directory to your PATH environment variable
+- Add aliases to your PowerShell profile for easy access
+
+#### Windows - Manual:
+Run PowerShell as Administrator and execute:
+.\install.ps1
+
+This will:
+- Check for and install required dependencies using winget (if missing)
+- Copy the scripts to a local directory
+- Add the directory to your PATH environment variable
+- Add aliases to your PowerShell profile for easy access

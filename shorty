@@ -9,25 +9,18 @@ import subprocess
 import argparse
 from pathlib import Path
 
-# Try to import colorama for colored output
-try:
-    from colorama import init, Fore, Style
-    init(autoreset=True)  # Initialize colorama
-    HAS_COLORAMA = True
-except ImportError:
-    HAS_COLORAMA = False
-    # Create dummy color classes if colorama is not available
-    class Fore:
-        GREEN = ""
-        RED = ""
-        YELLOW = ""
-        CYAN = ""
-        WHITE = ""
-        RESET = ""
-    
-    class Style:
-        BRIGHT = ""
-        RESET_ALL = ""
+# Using ANSI escape codes for colored output
+class Fore:
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    RESET = "\033[0m"
+
+class Style:
+    BRIGHT = "\033[1m"
+    RESET_ALL = "\033[0m"
 
 def parse_time_string(time_str):
     """

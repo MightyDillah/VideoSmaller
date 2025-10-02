@@ -11,30 +11,23 @@ from pathlib import Path
 # Sentinel to signal quitting the whole program from selection UIs
 QUIT = object()
 
-# Try to import colorama for colored output
-try:
-    from colorama import init, Fore, Style
-    init(autoreset=True)  # Initialize colorama
-    HAS_COLORAMA = True
-except ImportError:
-    HAS_COLORAMA = False
-    # Create dummy color classes if colorama is not available
-    class Fore:
-        BLACK = ""
-        RED = ""
-        GREEN = ""
-        YELLOW = ""
-        BLUE = ""
-        MAGENTA = ""
-        CYAN = ""
-        WHITE = ""
-        RESET = ""
-    
-    class Style:
-        BRIGHT = ""
-        DIM = ""
-        NORMAL = ""
-        RESET_ALL = ""
+# Using ANSI escape codes for colored output
+class Fore:
+    BLACK = "\033[30m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    RESET = "\033[0m"
+
+class Style:
+    BRIGHT = "\033[1m"
+    DIM = "\033[2m"
+    NORMAL = "\033[22m"
+    RESET_ALL = "\033[0m"
 
 # Try to import curses for TUI; fall back gracefully if unavailable
 try:
