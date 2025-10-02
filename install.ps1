@@ -149,11 +149,10 @@ if (-not (Test-Path $profileDir)) {
     Write-Host "Created PowerShell profile directory: $profileDir" -ForegroundColor Green
 }
 
-# Define the aliases to add
 $newAliases = @"
 # VideoSmaller tools aliases
 function vincon { python3 "$installDir\vincon.py" @args }
-function moxy { python3 "$installDir\moxy.py" @args } 
+function moxy { python3 "$installDir\moxy.py" @args }
 function shorty { python3 "$installDir\shorty.py" @args }
 "@
 
