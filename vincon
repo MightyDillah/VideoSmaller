@@ -629,6 +629,7 @@ def main():
         print("")
         print("Usage: vincon <directory>")
         print("       vincon -fixmp4 <directory>")
+        print("       vincon --fixonly <directory>")
         print("")
         print("Processes all video files in the specified directory.")
         print("Automatically detects and uses the best available hardware encoder:")
@@ -638,6 +639,8 @@ def main():
         print("  - Intel QSV (Windows/Linux with Intel GPU)")
         print("Supported formats: AVI, MPG, MPEG, WMV, MOV, FLV (MP4/MKV skipped)")
         print("Output: Same filename with .mp4 extension")
+        print("")
+        print("Post-processing: Use --fixonly or -fixmp4 to optimize existing MP4 files")
         print("")
         return
     
@@ -653,7 +656,19 @@ def main():
     elif len(sys.argv) == 2 and sys.argv[1] == "-fixmp4":
         print("Error: -fixmp4 requires a directory argument")
         return
-    elif sys.argv[1].startswith("-") and sys.argv[1] != "-fixmp4":
+    # Check for --fixonly flag
+    elif len(sys.argv) == 3 and sys.argv[1] == "--fixonly":
+        directory = sys.argv[2]
+        success = fix_mp4_files(directory)
+        if success:
+            print("\nMP4 fixing completed successfully!")
+        else:
+            print("\nMP4 fixing completed with errors.")
+        return
+    elif len(sys.argv) == 2 and sys.argv[1] == "--fixonly":
+        print("Error: --fixonly requires a directory argument")
+        return
+    elif sys.argv[1].startswith("-") and sys.argv[1] not in ["-fixmp4", "--fixonly"]:
         print(f"Error: Unknown flag {sys.argv[1]}")
         return
     
