@@ -109,9 +109,9 @@ foreach ($script in $scriptFiles) {
 Write-Host "`nCreating batch files for easy access..." -ForegroundColor Yellow
 
 $batchScripts = @{
-    "vincon.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\vincon.py`" %*`npopd"
-    "moxy.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\moxy.py`" %*`npopd"
-    "shorty.bat" = "@echo off`npushd `"%~dp0`"&`npowershell -ExecutionPolicy Bypass -File `"$installDir\shorty.py`" %*`npopd"
+    "vincon.bat" = "@echo off`npushd `"%~dp0`"&`npython3 `"$installDir\vincon.py`" %*`npopd"
+    "moxy.bat" = "@echo off`npushd `"%~dp0`"&`npython3 `"$installDir\moxy.py`" %*`npopd"
+    "shorty.bat" = "@echo off`npushd `"%~dp0`"&`npython3 `"$installDir\shorty.py`" %*`npopd"
 }
 
 foreach ($batchFile in $batchScripts.GetEnumerator()) {
@@ -152,9 +152,9 @@ if (-not (Test-Path $profileDir)) {
 # Define the aliases to add
 $newAliases = @"
 # VideoSmaller tools aliases
-Set-Alias -Name vincon -Value "$installDir\vincon.py"
-Set-Alias -Name moxy -Value "$installDir\moxy.py" 
-Set-Alias -Name shorty -Value "$installDir\shorty.py"
+function vincon { python3 "$installDir\vincon.py" @args }
+function moxy { python3 "$installDir\moxy.py" @args } 
+function shorty { python3 "$installDir\shorty.py" @args }
 "@
 
 # Read current profile content
