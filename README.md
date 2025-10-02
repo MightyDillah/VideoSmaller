@@ -32,7 +32,10 @@ Usage examples:
 
 ## Tracksize
 Shows a list of all tracks in an MKV file sorted by size, with human-readable formatting (KB, MB, GB)
-tracksize video.mkv
+
+Usage examples:
+  Unix: tracksize video.mkv
+  Windows: tracksize video.mkv
 
 ## Install
 note: you also need python3, but i wont get into that here you should already have it anyway.
