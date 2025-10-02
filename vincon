@@ -4,6 +4,7 @@ import subprocess
 import json
 import os
 import sys
+import platform
 from pathlib import Path
 import time
 
@@ -127,8 +128,61 @@ def parse_video_info(info, file_path):
         'pix_fmt': pix_fmt
     }
 
+def detect_available_encoders():
+    """Detect which HEVC encoders are available in ffmpeg"""
+    try:
+        result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, check=True)
+        encoders_output = result.stdout
+        
+        available_encoders = {}
+        
+        # Check for Apple VideoToolbox encoder
+        if 'hevc_videotoolbox' in encoders_output:
+            available_encoders['videotoolbox'] = 'hevc_videotoolbox'
+        
+        # Check for AMD AMF encoder
+        if 'hevc_amf' in encoders_output:
+            available_encoders['amf'] = 'hevc_amf'
+        
+        # Check for NVIDIA NVENC encoder
+        if 'hevc_nvenc' in encoders_output:
+            available_encoders['nvenc'] = 'hevc_nvenc'
+            
+        # Check for Intel QSV encoder
+        if 'hevc_qsv' in encoders_output:
+            available_encoders['qsv'] = 'hevc_qsv'
+        
+        return available_encoders
+    except Exception as e:
+        print(f"Error detecting encoders: {e}")
+        # Return default based on platform if detection fails
+        import platform
+        system = platform.system().lower()
+        if system == 'darwin':  # macOS
+            return {'videotoolbox': 'hevc_videotoolbox'}
+        else:
+            # On other systems, assume common encoders might be available
+            return {}
+
+def get_best_encoder():
+    """Get the best available HEVC encoder based on platform"""
+    encoders = detect_available_encoders()
+    
+    # Encoder priority based on quality and performance
+    encoder_priority = ['videotoolbox', 'nvenc', 'amf', 'qsv']
+    
+    for encoder_name in encoder_priority:
+        if encoder_name in encoders:
+            encoder = encoders[encoder_name]
+            print(f"Using {encoder} encoder")
+            return encoder, encoder_name
+    
+    # If no hardware encoder found, fall back to software
+    print("No hardware encoder found, using software encoder")
+    return 'libx265', 'software'
+
 def convert_video(input_file, video_params):
-    """Convert video using ffmpeg with hardware encoding"""
+    """Convert video using ffmpeg with the best available hardware encoding"""
     if not video_params:
         print(f"Could not determine parameters for {input_file}")
         return False
@@ -141,19 +195,41 @@ def convert_video(input_file, video_params):
     if input_path.suffix.lower() == '.mp4':
         output_file = input_path.parent / f"{input_path.stem}_out.mp4"
     
+    # Detect and get the best available encoder
+    encoder, encoder_type = get_best_encoder()
+    
     # Prepare ffmpeg command with enhanced options
     cmd = [
         'ffmpeg', '-y', '-i', input_file,  # Overwrite output files
-        '-c:v', 'hevc_videotoolbox',  # Hardware encoding
+        '-c:v', encoder,  # Use best available hardware encoding
         '-pix_fmt', video_params['pix_fmt'],
         '-c:a', 'aac',  # Audio codec
         '-ar', '44100',  # Audio sample rate
         '-b:a', '128k',  # Audio bitrate
         '-ac', '2',  # Audio channels
         '-movflags', 'faststart',  # Optimize for streaming and compatibility
-        '-vtag', 'hvc1',  # Use hvc1 codec tag for better macOS compatibility
         '-profile:v', 'main'  # Use main profile for wide compatibility
     ]
+    
+    # Add encoder-specific options
+    if encoder_type == 'amf':  # AMD AMF encoder
+        cmd.extend([
+            '-quality', 'balanced',  # Quality preset for AMF
+            '-usage', 'transcoding'  # Usage preset for AMF
+        ])
+    elif encoder_type == 'nvenc':  # NVIDIA NVENC encoder
+        cmd.extend([
+            '-preset', 'p7',  # Performance preset for NVENC
+            '-tune', 'hq'  # Tune for high quality
+        ])
+    elif encoder_type == 'qsv':  # Intel QSV encoder
+        cmd.extend([
+            '-preset', 'veryfast'  # Performance preset for QSV
+        ])
+    elif encoder_type == 'videotoolbox':  # Apple VideoToolbox encoder
+        cmd.extend([
+            '-vtag', 'hvc1',  # Use hvc1 codec tag for better macOS compatibility
+        ])
     
     # Add video bitrate if available, with maximum limit
     if video_params['bit_rate']:
@@ -169,6 +245,7 @@ def convert_video(input_file, video_params):
     
     print(f"Converting {input_file} -> {output_file}")
     print(f"Parameters: {video_params}")
+    print(f"Encoder: {encoder}")
     if video_params['bit_rate']:
         print(f"Target bitrate: {video_params['bit_rate']} kbps")
     
@@ -447,12 +524,17 @@ def fix_mp4_files(directory):
 
 def main():
     if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Video Converter - Convert videos to HEVC using Apple VideoToolbox")
+        print("Video Converter - Convert videos to HEVC using available hardware encoder")
         print("")
         print("Usage: vincon <directory>")
         print("       vincon -fixmp4 <directory>")
         print("")
         print("Processes all video files in the specified directory.")
+        print("Automatically detects and uses the best available hardware encoder:")
+        print("  - Apple VideoToolbox (macOS)")
+        print("  - AMD AMF (Windows/Linux with AMD GPU)")
+        print("  - NVIDIA NVENC (Windows/Linux with NVIDIA GPU)")
+        print("  - Intel QSV (Windows/Linux with Intel GPU)")
         print("Supported formats: AVI, MPG, MPEG, WMV, MOV, FLV (MP4/MKV skipped)")
         print("Output: Same filename with .mp4 extension")
         print("")
