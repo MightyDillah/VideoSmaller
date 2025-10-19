@@ -185,36 +185,36 @@ def test_encoder(encoder_name):
                     if os.path.exists(device_path):
                         available_devices.append(device_path)
                 
-                # If we have multiple devices, try to identify which one corresponds to AMD
-                if len(available_devices) == 1:
-                    # If only one device, use it
-                    vaapi_device = available_devices[0]
-                elif len(available_devices) > 1:
-                    # If multiple devices, try to determine which GPU each corresponds to
-                    try:
-                        lspci_result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
-                        if lspci_result.returncode == 0:
-                            lspci_output = lspci_result.stdout
-                            # Check if AMD GPU is present
-                            if 'radeon' in lspci_output.lower() or 'amd' in lspci_output.lower() or 'navi' in lspci_output.lower():
-                                # For systems with both Intel and AMD, we need to determine which render node corresponds to which GPU
-                                # In most cases, the first render node corresponds to the primary GPU, but we'll test each one
-                                for device_path in available_devices:
-                                    # Try a minimal test to see if this device works with VAAPI
-                                    test_cmd_probe = [
-                                        'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'nullsrc=s=64x64', 
-                                        '-vf', 'format=nv12|vaapi', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
-                                    ]
-                                    probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10)
-                                    if probe_result.returncode == 0:
-                                        vaapi_device = device_path
-                                        break
-                    except:
-                        # If we can't run detailed checks, just use the first available device
-                        vaapi_device = available_devices[0]
-                else:
-                    # If no render devices found, just try the generic approach
-                    vaapi_device = '/dev/dri/renderD128'  # fallback
+                # Test each available device to find one that works with AMD driver
+                for device_path in available_devices:
+                    # Test with AMD driver first
+                    test_env = os.environ.copy()
+                    test_env['LIBVA_DRIVER_NAME'] = 'radeonsi'
+                    
+                    # Try a minimal VAAPI test
+                    test_cmd_probe = [
+                        'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
+                        '-vf', 'format=nv12|vaapi', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                    ]
+                    probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10, env=test_env)
+                    if probe_result.returncode == 0:
+                        vaapi_device = device_path
+                        break
+                
+                # If no device worked, try Intel driver as fallback
+                if not vaapi_device and available_devices:
+                    for device_path in available_devices:
+                        test_env = os.environ.copy()
+                        test_env['LIBVA_DRIVER_NAME'] = 'iHD'
+                        
+                        test_cmd_probe = [
+                            'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
+                            '-vf', 'format=nv12|vaapi', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                        ]
+                        probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10, env=test_env)
+                        if probe_result.returncode == 0:
+                            vaapi_device = device_path
+                            break
                 
                 # If no device found from render nodes, try card devices
                 if not vaapi_device:
@@ -237,22 +237,39 @@ def test_encoder(encoder_name):
                                 break
                 
                 if vaapi_device:
+                    # Try with AMD driver first (radeonsi)
+                    test_env = os.environ.copy()
+                    test_env['LIBVA_DRIVER_NAME'] = 'radeonsi'
+                    
                     test_cmd2 = [
                         'ffmpeg', '-vaapi_device', vaapi_device, '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
                         '-vf', 'format=nv12|vaapi,hwupload', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
                     ]
-                    result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15)
+                    result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15, env=test_env)
                     
                     if result2.returncode == 0:
                         return True
-                    # If the first test failed, try without hwupload
+                    
+                    # If AMD driver failed, try without hwupload
                     test_cmd3 = [
                         'ffmpeg', '-vaapi_device', vaapi_device, '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
                         '-pix_fmt', 'nv12', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
                     ]
-                    result3 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=15)
+                    result3 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=15, env=test_env)
                     
                     if result3.returncode == 0:
+                        return True
+                    
+                    # If AMD driver still failed, try Intel driver as fallback
+                    test_env['LIBVA_DRIVER_NAME'] = 'iHD'
+                    result4 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15, env=test_env)
+                    
+                    if result4.returncode == 0:
+                        return True
+                    
+                    result5 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=15, env=test_env)
+                    
+                    if result5.returncode == 0:
                         return True
             else:
                 # Test with standard test source for other hardware encoders
@@ -481,34 +498,39 @@ def convert_video(input_file, video_params):
             if os.path.exists(device_path):
                 available_devices.append(device_path)
         
-        # If we have multiple devices, try to identify which one corresponds to AMD
-        if len(available_devices) == 1:
-            # If only one device, use it
-            vaapi_device = available_devices[0]
-        elif len(available_devices) > 1:
-            # If multiple devices, try to determine which GPU each corresponds to
-            try:
-                lspci_result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
-                if lspci_result.returncode == 0:
-                    lspci_output = lspci_result.stdout
-                    # Check if AMD GPU is present
-                    if 'radeon' in lspci_output.lower() or 'amd' in lspci_output.lower() or 'navi' in lspci_output.lower():
-                        # For systems with both Intel and AMD, we need to determine which render node corresponds to which GPU
-                        for device_path in available_devices:
-                            # Try a minimal test to see if this device works with VAAPI
-                            test_cmd_probe = [
-                                'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'nullsrc=s=64x64', 
-                                '-vf', 'format=nv12|vaapi', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
-                            ]
-                            probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10)
-                            if probe_result.returncode == 0:
-                                vaapi_device = device_path
-                                break
-            except:
-                # If we can't run detailed checks, just use the first available device
-                vaapi_device = available_devices[0]
-        else:
-            # If no render devices found, check card devices
+        # Test each available device to find one that works with AMD driver
+        for device_path in available_devices:
+            # Test with AMD driver first
+            test_env = os.environ.copy()
+            test_env['LIBVA_DRIVER_NAME'] = 'radeonsi'
+            
+            # Try a minimal VAAPI test
+            test_cmd_probe = [
+                'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
+                '-vf', 'format=nv12|vaapi', '-c:v', encoder, '-frames:v', '1', '-f', 'null', '-'
+            ]
+            probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10, env=test_env)
+            if probe_result.returncode == 0:
+                vaapi_device = device_path
+                break
+        
+        # If no device worked, try Intel driver as fallback
+        if not vaapi_device and available_devices:
+            for device_path in available_devices:
+                test_env = os.environ.copy()
+                test_env['LIBVA_DRIVER_NAME'] = 'iHD'
+                
+                test_cmd_probe = [
+                    'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
+                    '-vf', 'format=nv12|vaapi', '-c:v', encoder, '-frames:v', '1', '-f', 'null', '-'
+                ]
+                probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10, env=test_env)
+                if probe_result.returncode == 0:
+                    vaapi_device = device_path
+                    break
+        
+        # If no device found from render nodes, try card devices
+        if not vaapi_device:
             for i in range(3):  # Check card0 through card2
                 device_path = f'/dev/dri/card{i}'
                 if os.path.exists(device_path):
@@ -548,7 +570,15 @@ def convert_video(input_file, video_params):
     try:
         # Run ffmpeg with real-time output
         start_time = time.time()
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        
+        # Use environment with AMD driver for VAAPI
+        if encoder_type == 'vaapi':
+            import os
+            env = os.environ.copy()
+            env['LIBVA_DRIVER_NAME'] = 'radeonsi'
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+        else:
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         
         # Print output in real-time
         for line in process.stdout:
