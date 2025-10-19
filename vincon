@@ -513,8 +513,8 @@ def convert_video(input_file, video_params, encoder=None, encoder_type=None, hwa
     input_path = Path(input_file)
     output_file = input_path.parent / f"{input_path.stem}.mp4"
     
-    # If input is already .mp4, add _out suffix to avoid overwriting
-    if input_path.suffix.lower() == '.mp4':
+    # If input is already .mp4 or .mkv, add _out suffix to avoid overwriting
+    if input_path.suffix.lower() in ['.mp4', '.mkv']:
         output_file = input_path.parent / f"{input_path.stem}_out.mp4"
     
     # Detect encoder if not provided
@@ -610,8 +610,8 @@ def convert_video(input_file, video_params, encoder=None, encoder_type=None, hwa
 
 def process_directory(directory):
     """Process all video files in a directory as a batch"""
-    # Supported video extensions (excluding MP4 and MKV as requested)
-    video_extensions = {'.avi', '.mpg', '.mpeg', '.wmv', '.mov', '.flv'}
+    # Supported video extensions (including MP4 and MKV)
+    video_extensions = {'.avi', '.mpg', '.mpeg', '.wmv', '.mov', '.flv', '.mp4', '.mkv'}
     
     # Find all video files in directory
     video_files = []
@@ -877,7 +877,7 @@ def main():
         print("  - AMD AMF (Windows/Linux with AMD GPU)")
         print("  - NVIDIA NVENC (Windows/Linux with NVIDIA GPU)")
         print("  - Intel QSV (Windows/Linux with Intel GPU)")
-        print("Supported formats: AVI, MPG, MPEG, WMV, MOV, FLV (MP4/MKV skipped)")
+        print("Supported formats: AVI, MPG, MPEG, WMV, MOV, FLV, MP4, MKV")
         print("Output: Same filename with .mp4 extension")
         print("")
         print("Post-processing: Use --fixonly or -fixmp4 to optimize existing MP4 files")
