@@ -160,7 +160,7 @@ def test_encoder(encoder_name):
                 
         # If it failed for other reasons, try a more hardware-encoder-friendly test
         # Some hardware encoders work better with different pixel formats or source types
-        if 'amf' in encoder_name or 'nvenc' in encoder_name or 'qsv' in encoder_name:
+        if 'amf' in encoder_name or 'nvenc' in encoder_name or 'qsv' in encoder_name or 'vaapi' in encoder_name:
             # For QSV specifically, try with higher resolution which is often required
             if 'qsv' in encoder_name:
                 # QSV encoders often require minimum resolution - try with 128x128
@@ -172,6 +172,28 @@ def test_encoder(encoder_name):
                 
                 if result2.returncode == 0:
                     return True
+            # For VAAPI encoders, try with device specification
+            elif 'vaapi' in encoder_name:
+                # Check if VAAPI device exists
+                import os
+                if os.path.exists('/dev/dri/renderD128') or os.path.exists('/dev/dri/card0'):
+                    test_cmd2 = [
+                        'ffmpeg', '-vaapi_device', '/dev/dri/renderD128', '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
+                        '-vf', 'format=nv12|vaapi,hwupload', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                    ]
+                    result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15)
+                    
+                    if result2.returncode == 0:
+                        return True
+                    # If the first test failed, try without hwupload
+                    test_cmd3 = [
+                        'ffmpeg', '-vaapi_device', '/dev/dri/renderD128', '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
+                        '-pix_fmt', 'nv12', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                    ]
+                    result3 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=15)
+                    
+                    if result3.returncode == 0:
+                        return True
             else:
                 # Test with standard test source for other hardware encoders
                 test_cmd2 = [
@@ -271,28 +293,33 @@ def detect_available_encoders():
         
         available_encoders = {}
         
-        # Define encoders to check
+        # Define encoders to check - include VAAPI for Linux systems
         encoder_checks = [
             ('videotoolbox', 'hevc_videotoolbox'),  # Always check Apple first on macOS
             ('nvenc', 'hevc_nvenc'),
             ('amf', 'hevc_amf'),
-            ('qsv', 'hevc_qsv')
+            ('qsv', 'hevc_qsv'),
+            ('vaapi', 'hevc_vaapi')  # VAAPI support for Linux AMD/Intel
         ]
         
         # Reorder based on GPU vendor if detected
         if gpu_vendor == 'nvidia':
-            encoder_order = ['nvenc', 'amf', 'qsv', 'videotoolbox']
+            encoder_order = ['nvenc', 'vaapi', 'amf', 'qsv', 'videotoolbox']
         elif gpu_vendor == 'amd':
-            encoder_order = ['amf', 'qsv', 'nvenc', 'videotoolbox']  # AMD first
+            encoder_order = ['vaapi', 'amf', 'qsv', 'nvenc', 'videotoolbox']  # VAAPI/AMF for AMD on Linux
         elif gpu_vendor == 'intel':
-            encoder_order = ['qsv', 'amf', 'nvenc', 'videotoolbox']  # Intel QSV first
+            encoder_order = ['vaapi', 'qsv', 'amf', 'nvenc', 'videotoolbox']  # VAAPI/QSV for Intel
         else:
             # Default order: prefer Apple on macOS, otherwise use general priority
             import platform
-            if platform.system().lower() == 'darwin':
-                encoder_order = ['videotoolbox', 'qsv', 'amf', 'nvenc']
+            system = platform.system().lower()
+            if system == 'darwin':
+                encoder_order = ['videotoolbox', 'vaapi', 'qsv', 'amf', 'nvenc']
+            elif system == 'linux':
+                # On Linux, prioritize VAAPI since it works with both AMD and Intel
+                encoder_order = ['vaapi', 'amf', 'nvenc', 'qsv']  # VAAPI first on Linux
             else:
-                encoder_order = ['amf', 'nvenc', 'qsv', 'videotoolbox']  # Prefer AMD on Windows/Linux
+                encoder_order = ['amf', 'nvenc', 'qsv', 'vaapi', 'videotoolbox']
         
         print(f"Encoder detection order based on GPU vendor: {encoder_order}")
         
@@ -381,6 +408,11 @@ def convert_video(input_file, video_params):
     elif encoder_type == 'qsv':  # Intel QSV encoder
         cmd.extend([
             '-preset', 'veryfast'  # Performance preset for QSV
+        ])
+    elif encoder_type == 'vaapi':  # VAAPI encoder for Linux AMD/Intel
+        cmd.extend([
+            '-vaapi_device', '/dev/dri/renderD128',  # Specify VAAPI device
+            '-qp', '23'  # Quality parameter for VAAPI
         ])
     elif encoder_type == 'videotoolbox':  # Apple VideoToolbox encoder
         cmd.extend([
