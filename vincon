@@ -161,14 +161,27 @@ def test_encoder(encoder_name):
         # If it failed for other reasons, try a more hardware-encoder-friendly test
         # Some hardware encoders work better with different pixel formats or source types
         if 'amf' in encoder_name or 'nvenc' in encoder_name or 'qsv' in encoder_name:
-            test_cmd2 = [
-                'ffmpeg', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
-                '-pix_fmt', 'yuv420p', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
-            ]
-            result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15)
-            
-            if result2.returncode == 0:
-                return True
+            # For QSV specifically, try with higher resolution which is often required
+            if 'qsv' in encoder_name:
+                # QSV encoders often require minimum resolution - try with 128x128
+                test_cmd2 = [
+                    'ffmpeg', '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
+                    '-pix_fmt', 'yuv420p', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                ]
+                result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15)
+                
+                if result2.returncode == 0:
+                    return True
+            else:
+                # Test with standard test source for other hardware encoders
+                test_cmd2 = [
+                    'ffmpeg', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
+                    '-pix_fmt', 'yuv420p', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                ]
+                result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15)
+                
+                if result2.returncode == 0:
+                    return True
         
         # If it failed for other reasons (like unsupported resolution for certain encoders),
         # we might still consider it functional for normal use cases
@@ -185,7 +198,8 @@ def detect_gpu_vendor():
     try:
         # Try to use dxgi on Windows to detect GPU
         import platform
-        if platform.system().lower() == 'windows':
+        system = platform.system().lower()
+        if system == 'windows':
             # Query Windows for display adapters using PowerShell
             result = subprocess.run(
                 ['powershell', '-Command', 
@@ -200,6 +214,45 @@ def detect_gpu_vendor():
                     return 'amd'
                 elif 'intel' in gpu_info or 'iris' in gpu_info:
                     return 'intel'
+        elif system == 'linux':
+            # Detect GPU vendors on Linux
+            try:
+                # Check for NVIDIA first
+                nvidia_result = subprocess.run(['nvidia-smi', '-L'], capture_output=True, text=True, timeout=10)
+                if nvidia_result.returncode == 0 and 'gpu' in nvidia_result.stdout.lower():
+                    return 'nvidia'
+            except:
+                pass
+            
+            try:
+                # Look for AMD and Intel in lspci output
+                lspci_result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
+                if lspci_result.returncode == 0:
+                    lspci_output = lspci_result.stdout.lower()
+                    has_amd = any(amd_indicator in lspci_output for amd_indicator in ['amd', 'ati', 'radeon'])
+                    has_intel = 'intel' in lspci_output and any(vga_indicator in lspci_output for vga_indicator in ['vga', 'display', '3d'])
+                    
+                    # If both AMD and Intel are present, prioritize AMD since AMF should work if available
+                    if has_amd:
+                        return 'amd'
+                    elif has_intel:
+                        return 'intel'
+            except:
+                pass
+        elif system == 'darwin':
+            # On macOS, check for graphics hardware
+            try:
+                ioreg_result = subprocess.run(['ioreg', '-c', 'IOAccelerator'], capture_output=True, text=True, timeout=10)
+                if ioreg_result.returncode == 0:
+                    ioreg_output = ioreg_result.stdout.lower()
+                    if 'nvidia' in ioreg_output:
+                        return 'nvidia'
+                    elif 'amd' in ioreg_output or 'radeon' in ioreg_output:
+                        return 'amd'
+                    elif 'intel' in ioreg_output:
+                        return 'intel'
+            except:
+                pass
     except:
         pass
     
