@@ -358,88 +358,70 @@ def detect_gpu_vendor():
     # If we can't detect, return None and let priority order decide
     return None
 
-def detect_available_encoders():
-    """Detect which HEVC encoders are available and functional in ffmpeg"""
-    try:
-        result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, check=True)
-        encoders_output = result.stdout
+def detect_and_select_encoder():
+    """
+    Detect best encoder using platform-first approach
+    Returns: (encoder_name, encoder_type, hwaccel_config)
+    """
+    system = platform.system().lower()
+    
+    # 1. macOS: Try VideoToolbox
+    if system == 'darwin':
+        print("Platform: macOS")
+        # Check if VideoToolbox encoder exists
+        try:
+            result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, timeout=5)
+            if 'hevc_videotoolbox' in result.stdout:
+                # Test if it actually works
+                test_cmd = ['ffmpeg', '-f', 'lavfi', '-i', 'color=black:s=64x64:d=0.1', 
+                           '-c:v', 'hevc_videotoolbox', '-frames:v', '1', '-f', 'null', '-']
+                test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+                if test_result.returncode == 0:
+                    print("✓ Using VideoToolbox hardware encoder")
+                    return 'hevc_videotoolbox', 'videotoolbox', None
+                else:
+                    print("✗ VideoToolbox detected but not functional")
+        except Exception as e:
+            print(f"✗ VideoToolbox test failed: {e}")
+    
+    # 2. Linux: Check for /dev/dri devices and use VAAPI
+    elif system == 'linux':
+        print("Platform: Linux")
+        # Find available DRI devices
+        devices = []
+        for i in range(128, 140):
+            device_path = f'/dev/dri/renderD{i}'
+            if os.path.exists(device_path):
+                devices.append(device_path)
         
-        # Detect GPU vendor to prioritize encoders accordingly
-        gpu_vendor = detect_gpu_vendor()
-        print(f"Detected GPU vendor: {gpu_vendor}")
-        
-        available_encoders = {}
-        
-        # Define encoders to check - include VAAPI for Linux systems
-        encoder_checks = [
-            ('videotoolbox', 'hevc_videotoolbox'),  # Always check Apple first on macOS
-            ('nvenc', 'hevc_nvenc'),
-            ('amf', 'hevc_amf'),
-            ('qsv', 'hevc_qsv'),
-            ('vaapi', 'hevc_vaapi')  # VAAPI support for Linux AMD/Intel
-        ]
-        
-        # Reorder based on GPU vendor if detected
-        if gpu_vendor == 'nvidia':
-            encoder_order = ['nvenc', 'vaapi', 'amf', 'qsv', 'videotoolbox']
-        elif gpu_vendor == 'amd':
-            encoder_order = ['vaapi', 'amf', 'qsv', 'nvenc', 'videotoolbox']  # VAAPI/AMF for AMD on Linux
-        elif gpu_vendor == 'intel':
-            encoder_order = ['vaapi', 'qsv', 'amf', 'nvenc', 'videotoolbox']  # VAAPI/QSV for Intel
-        else:
-            # Default order: prefer Apple on macOS, otherwise use general priority
-            import platform
-            system = platform.system().lower()
-            if system == 'darwin':
-                encoder_order = ['videotoolbox', 'vaapi', 'qsv', 'amf', 'nvenc']
-            elif system == 'linux':
-                # On Linux, prioritize VAAPI since it works with both AMD and Intel
-                encoder_order = ['vaapi', 'amf', 'nvenc', 'qsv']  # VAAPI first on Linux
-            else:
-                encoder_order = ['amf', 'nvenc', 'qsv', 'vaapi', 'videotoolbox']
-        
-        print(f"Encoder detection order based on GPU vendor: {encoder_order}")
-        
-        # Check encoders in the appropriate order
-        for name in encoder_order:
-            # Find the corresponding encoder
-            for check_name, encoder in encoder_checks:
-                if check_name == name and encoder in encoders_output:
-                    # Test if the encoder actually works
-                    if test_encoder(encoder):
-                        available_encoders[name] = encoder
-                        print(f"Detected working {name} encoder: {encoder}")
-                        break  # Found and tested this encoder, move to next priority
+        if devices:
+            print(f"Found DRI devices: {devices}")
+            # Check if hevc_vaapi encoder exists
+            try:
+                result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, timeout=5)
+                if 'hevc_vaapi' in result.stdout:
+                    # Test with first device
+                    device = devices[0]
+                    test_cmd = [
+                        'ffmpeg', '-hwaccel', 'vaapi', '-hwaccel_device', device,
+                        '-hwaccel_output_format', 'vaapi', 
+                        '-f', 'lavfi', '-i', 'color=black:s=64x64:d=0.1',
+                        '-c:v', 'hevc_vaapi', '-frames:v', '1', '-f', 'null', '-'
+                    ]
+                    test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+                    if test_result.returncode == 0:
+                        print(f"✓ Using VAAPI hardware encoder with device: {device}")
+                        return 'hevc_vaapi', 'vaapi', {'device': device}
                     else:
-                        print(f"Encoder {encoder} detected but not functional, skipping")
-        
-        return available_encoders
-    except Exception as e:
-        print(f"Error detecting encoders: {e}")
-        # Return default based on platform if detection fails
-        import platform
-        system = platform.system().lower()
-        if system == 'darwin':  # macOS
-            return {'videotoolbox': 'hevc_videotoolbox'}
+                        print(f"✗ VAAPI test failed: {test_result.stderr[:200]}")
+            except Exception as e:
+                print(f"✗ VAAPI test failed: {e}")
         else:
-            # On other systems, assume software encoder is always available
-            return {'software': 'libx265'}
-
-def get_best_encoder():
-    """Get the best available HEVC encoder based on platform and GPU"""
-    encoders = detect_available_encoders()
+            print("✗ No /dev/dri devices found")
     
-    # The encoders dict already has the priority order based on GPU vendor
-    # Just return the first one in the dict (which will be highest priority that works)
-    if encoders:
-        encoder_name = next(iter(encoders))  # Get first key
-        encoder = encoders[encoder_name]
-        print(f"Using {encoder} encoder")
-        return encoder, encoder_name
-    
-    # If no hardware encoder found or working, fall back to software
-    print("No working hardware encoder found, using software encoder")
-    return 'libx265', 'software'
+    # 3. Fallback to software encoder
+    print("→ Falling back to software encoder (libx265)")
+    return 'libx265', 'software', None
 
 def convert_video(input_file, video_params):
     """Convert video using ffmpeg with the best available hardware encoding"""
@@ -456,129 +438,70 @@ def convert_video(input_file, video_params):
         output_file = input_path.parent / f"{input_path.stem}_out.mp4"
     
     # Detect and get the best available encoder
-    encoder, encoder_type = get_best_encoder()
+    encoder, encoder_type, hwaccel_config = detect_and_select_encoder()
     
-    # Prepare ffmpeg command with enhanced options
-    cmd = [
-        'ffmpeg', '-y', '-i', input_file,  # Overwrite output files
-        '-c:v', encoder,  # Use best available hardware encoding
-        '-pix_fmt', video_params['pix_fmt'],
-        '-c:a', 'aac',  # Audio codec
-        '-ar', '44100',  # Audio sample rate
-        '-b:a', '128k',  # Audio bitrate
-        '-ac', '2',  # Audio channels
-        '-movflags', 'faststart',  # Optimize for streaming and compatibility
-        '-profile:v', 'main'  # Use main profile for wide compatibility
-    ]
+    # Build command based on encoder type
+    cmd = ['ffmpeg', '-y']
+    env = None
+    
+    # Add hardware acceleration BEFORE input for VAAPI
+    if encoder_type == 'vaapi' and hwaccel_config:
+        device = hwaccel_config['device']
+        cmd.extend(['-hwaccel', 'vaapi'])
+        cmd.extend(['-hwaccel_device', device])
+        cmd.extend(['-hwaccel_output_format', 'vaapi'])
+    
+    # Add input file
+    cmd.extend(['-i', input_file])
+    
+    # Add video codec
+    cmd.extend(['-c:v', encoder])
     
     # Add encoder-specific options
-    if encoder_type == 'amf':  # AMD AMF encoder
-        cmd.extend([
-            '-quality', 'balanced',  # Quality preset for AMF
-            '-usage', 'transcoding'  # Usage preset for AMF
-        ])
-    elif encoder_type == 'nvenc':  # NVIDIA NVENC encoder
-        cmd.extend([
-            '-preset', 'p7',  # Performance preset for NVENC
-            '-tune', 'hq'  # Tune for high quality
-        ])
-    elif encoder_type == 'qsv':  # Intel QSV encoder
-        cmd.extend([
-            '-preset', 'veryfast'  # Performance preset for QSV
-        ])
-    elif encoder_type == 'vaapi':  # VAAPI encoder for Linux AMD/Intel
-        # Find the appropriate VAAPI device - prefer AMD GPU when available
-        import os
-        vaapi_device = None
-        
-        # Look for available DRI render nodes
-        available_devices = []
-        for i in range(128, 140):  # Check renderD128 through renderD139
-            device_path = f'/dev/dri/renderD{i}'
-            if os.path.exists(device_path):
-                available_devices.append(device_path)
-        
-        # Test each available device to find one that works with AMD driver
-        for device_path in available_devices:
-            # Test with AMD driver first
-            test_env = os.environ.copy()
-            test_env['LIBVA_DRIVER_NAME'] = 'radeonsi'
-            
-            # Try a minimal VAAPI test
-            test_cmd_probe = [
-                'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
-                '-vf', 'format=nv12|vaapi', '-c:v', encoder, '-frames:v', '1', '-f', 'null', '-'
-            ]
-            probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10, env=test_env)
-            if probe_result.returncode == 0:
-                vaapi_device = device_path
-                break
-        
-        # If no device worked, try Intel driver as fallback
-        if not vaapi_device and available_devices:
-            for device_path in available_devices:
-                test_env = os.environ.copy()
-                test_env['LIBVA_DRIVER_NAME'] = 'iHD'
-                
-                test_cmd_probe = [
-                    'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1', 
-                    '-vf', 'format=nv12|vaapi', '-c:v', encoder, '-frames:v', '1', '-f', 'null', '-'
-                ]
-                probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10, env=test_env)
-                if probe_result.returncode == 0:
-                    vaapi_device = device_path
-                    break
-        
-        # If no device found from render nodes, try card devices
-        if not vaapi_device:
-            for i in range(3):  # Check card0 through card2
-                device_path = f'/dev/dri/card{i}'
-                if os.path.exists(device_path):
-                    vaapi_device = device_path
-                    break
-        
-        # Add VAAPI device if found
-        if vaapi_device:
-            cmd.extend(['-vaapi_device', vaapi_device])
-        
-        cmd.extend([
-            '-qp', '23'  # Quality parameter for VAAPI
-        ])
-    elif encoder_type == 'videotoolbox':  # Apple VideoToolbox encoder
-        cmd.extend([
-            '-vtag', 'hvc1',  # Use hvc1 codec tag for better macOS compatibility
-        ])
+    if encoder_type == 'videotoolbox':
+        # VideoToolbox options
+        cmd.extend(['-vtag', 'hvc1'])
+        cmd.extend(['-pix_fmt', video_params['pix_fmt']])
+        if video_params['bit_rate']:
+            bitrate = min(max(100, video_params['bit_rate']), MAX_BITRATE)
+            cmd.extend(['-b:v', f'{bitrate}k'])
     
-    # Add video bitrate if available, with maximum limit
-    if video_params['bit_rate']:
-        # Preserve original bitrate for quality matching, but cap at maximum
-        hevc_bitrate = min(max(100, video_params['bit_rate']), MAX_BITRATE)
-        cmd.extend(['-b:v', f'{hevc_bitrate}k'])
+    elif encoder_type == 'vaapi':
+        # VAAPI options - use quality parameter
+        cmd.extend(['-qp', '23'])
+        # Frame rate
+        cmd.extend(['-r', str(video_params['fps'])])
     
-    # Add frame rate
-    cmd.extend(['-r', str(video_params['fps'])])
+    elif encoder_type == 'software':
+        # Software encoder (libx265) options
+        cmd.extend(['-preset', 'medium'])
+        cmd.extend(['-crf', '23'])
+        cmd.extend(['-pix_fmt', video_params['pix_fmt']])
+        cmd.extend(['-r', str(video_params['fps'])])
     
-    # Add output file
+    # Audio encoding (same for all)
+    cmd.extend(['-c:a', 'aac'])
+    cmd.extend(['-b:a', '128k'])
+    cmd.extend(['-ar', '44100'])
+    cmd.extend(['-ac', '2'])
+    
+    # Container options
+    cmd.extend(['-movflags', 'faststart'])
+    
+    # Output file
     cmd.append(str(output_file))
     
     print(f"Converting {input_file} -> {output_file}")
     print(f"Parameters: {video_params}")
-    print(f"Encoder: {encoder}")
+    print(f"Encoder: {encoder} ({encoder_type})")
     if video_params['bit_rate']:
-        print(f"Target bitrate: {video_params['bit_rate']} kbps")
+        print(f"Source bitrate: {video_params['bit_rate']} kbps")
     
     try:
         # Run ffmpeg with real-time output
         start_time = time.time()
-        
-        # Use environment with AMD driver for VAAPI
-        if encoder_type == 'vaapi':
-            import os
-            env = os.environ.copy()
-            env['LIBVA_DRIVER_NAME'] = 'radeonsi'
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
-        else:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                   text=True, bufsize=1, env=env)
         
         # Print output in real-time
         for line in process.stdout:
@@ -588,13 +511,15 @@ def convert_video(input_file, video_params):
         end_time = time.time()
         
         if process.returncode == 0:
-            print(f"Successfully converted {input_file} in {end_time - start_time:.1f} seconds")
+            print(f"✓ Successfully converted {input_file} in {end_time - start_time:.1f} seconds")
             return True
         else:
-            print(f"Error converting {input_file}")
+            print(f"✗ FFmpeg failed with return code {process.returncode}")
             return False
     except Exception as e:
-        print(f"Exception during conversion of {input_file}: {e}")
+        print(f"✗ Exception during conversion of {input_file}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def process_directory(directory):
