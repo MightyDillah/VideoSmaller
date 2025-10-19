@@ -174,11 +174,71 @@ def test_encoder(encoder_name):
                     return True
             # For VAAPI encoders, try with device specification
             elif 'vaapi' in encoder_name:
-                # Check if VAAPI device exists
+                # Find the appropriate VAAPI device - check for AMD GPU specifically
                 import os
-                if os.path.exists('/dev/dri/renderD128') or os.path.exists('/dev/dri/card0'):
+                vaapi_device = None
+                
+                # Look for available DRI render nodes
+                available_devices = []
+                for i in range(128, 140):  # Check renderD128 through renderD139
+                    device_path = f'/dev/dri/renderD{i}'
+                    if os.path.exists(device_path):
+                        available_devices.append(device_path)
+                
+                # If we have multiple devices, try to identify which one corresponds to AMD
+                if len(available_devices) == 1:
+                    # If only one device, use it
+                    vaapi_device = available_devices[0]
+                elif len(available_devices) > 1:
+                    # If multiple devices, try to determine which GPU each corresponds to
+                    try:
+                        lspci_result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
+                        if lspci_result.returncode == 0:
+                            lspci_output = lspci_result.stdout
+                            # Check if AMD GPU is present
+                            if 'radeon' in lspci_output.lower() or 'amd' in lspci_output.lower() or 'navi' in lspci_output.lower():
+                                # For systems with both Intel and AMD, we need to determine which render node corresponds to which GPU
+                                # In most cases, the first render node corresponds to the primary GPU, but we'll test each one
+                                for device_path in available_devices:
+                                    # Try a minimal test to see if this device works with VAAPI
+                                    test_cmd_probe = [
+                                        'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'nullsrc=s=64x64', 
+                                        '-vf', 'format=nv12|vaapi', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                                    ]
+                                    probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10)
+                                    if probe_result.returncode == 0:
+                                        vaapi_device = device_path
+                                        break
+                    except:
+                        # If we can't run detailed checks, just use the first available device
+                        vaapi_device = available_devices[0]
+                else:
+                    # If no render devices found, just try the generic approach
+                    vaapi_device = '/dev/dri/renderD128'  # fallback
+                
+                # If no device found from render nodes, try card devices
+                if not vaapi_device:
+                    for i in range(3):  # Check card0 through card2
+                        device_path = f'/dev/dri/card{i}'
+                        if os.path.exists(device_path):
+                            # Check if AMD GPU is present
+                            try:
+                                lspci_result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
+                                if lspci_result.returncode == 0:
+                                    lspci_output = lspci_result.stdout.lower()
+                                    if 'radeon' in lspci_output or 'amd' in lspci_output or 'navi' in lspci_output:
+                                        vaapi_device = device_path
+                                        break
+                            except:
+                                pass
+                            # If we can't determine GPU type, use the first card device
+                            if not vaapi_device:
+                                vaapi_device = device_path
+                                break
+                
+                if vaapi_device:
                     test_cmd2 = [
-                        'ffmpeg', '-vaapi_device', '/dev/dri/renderD128', '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
+                        'ffmpeg', '-vaapi_device', vaapi_device, '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
                         '-vf', 'format=nv12|vaapi,hwupload', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
                     ]
                     result2 = subprocess.run(test_cmd2, capture_output=True, text=True, timeout=15)
@@ -187,7 +247,7 @@ def test_encoder(encoder_name):
                         return True
                     # If the first test failed, try without hwupload
                     test_cmd3 = [
-                        'ffmpeg', '-vaapi_device', '/dev/dri/renderD128', '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
+                        'ffmpeg', '-vaapi_device', vaapi_device, '-f', 'lavfi', '-i', 'testsrc=size=128x128:rate=1', 
                         '-pix_fmt', 'nv12', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
                     ]
                     result3 = subprocess.run(test_cmd3, capture_output=True, text=True, timeout=15)
@@ -410,8 +470,56 @@ def convert_video(input_file, video_params):
             '-preset', 'veryfast'  # Performance preset for QSV
         ])
     elif encoder_type == 'vaapi':  # VAAPI encoder for Linux AMD/Intel
+        # Find the appropriate VAAPI device - prefer AMD GPU when available
+        import os
+        vaapi_device = None
+        
+        # Look for available DRI render nodes
+        available_devices = []
+        for i in range(128, 140):  # Check renderD128 through renderD139
+            device_path = f'/dev/dri/renderD{i}'
+            if os.path.exists(device_path):
+                available_devices.append(device_path)
+        
+        # If we have multiple devices, try to identify which one corresponds to AMD
+        if len(available_devices) == 1:
+            # If only one device, use it
+            vaapi_device = available_devices[0]
+        elif len(available_devices) > 1:
+            # If multiple devices, try to determine which GPU each corresponds to
+            try:
+                lspci_result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
+                if lspci_result.returncode == 0:
+                    lspci_output = lspci_result.stdout
+                    # Check if AMD GPU is present
+                    if 'radeon' in lspci_output.lower() or 'amd' in lspci_output.lower() or 'navi' in lspci_output.lower():
+                        # For systems with both Intel and AMD, we need to determine which render node corresponds to which GPU
+                        for device_path in available_devices:
+                            # Try a minimal test to see if this device works with VAAPI
+                            test_cmd_probe = [
+                                'ffmpeg', '-vaapi_device', device_path, '-f', 'lavfi', '-i', 'nullsrc=s=64x64', 
+                                '-vf', 'format=nv12|vaapi', '-c:v', encoder_name, '-frames:v', '1', '-f', 'null', '-'
+                            ]
+                            probe_result = subprocess.run(test_cmd_probe, capture_output=True, text=True, timeout=10)
+                            if probe_result.returncode == 0:
+                                vaapi_device = device_path
+                                break
+            except:
+                # If we can't run detailed checks, just use the first available device
+                vaapi_device = available_devices[0]
+        else:
+            # If no render devices found, check card devices
+            for i in range(3):  # Check card0 through card2
+                device_path = f'/dev/dri/card{i}'
+                if os.path.exists(device_path):
+                    vaapi_device = device_path
+                    break
+        
+        # Add VAAPI device if found
+        if vaapi_device:
+            cmd.extend(['-vaapi_device', vaapi_device])
+        
         cmd.extend([
-            '-vaapi_device', '/dev/dri/renderD128',  # Specify VAAPI device
             '-qp', '23'  # Quality parameter for VAAPI
         ])
     elif encoder_type == 'videotoolbox':  # Apple VideoToolbox encoder
