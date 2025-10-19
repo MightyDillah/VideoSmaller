@@ -40,13 +40,13 @@ echo "Selected OS: $OS"
 echo ""
 
 # Check if running from the correct directory
-if [ ! -f "vincon" ] || [ ! -f "moxy" ] || [ ! -f "shorty" ] || [ ! -f "tracksize" ] || [ ! -f "README.md" ]; then
-    echo "Error: This script must be run from the Vincon directory containing vincon, moxy, shorty, tracksize, and README.md files."
+if [ ! -f "vincon" ] || [ ! -f "moxy" ] || [ ! -f "shorty" ] || [ ! -f "README.md" ]; then
+    echo "Error: This script must be run from the Vincon directory containing vincon, moxy, shorty, and README.md files."
     exit 1
 fi
 
 # Check if required tools exist and are readable
-for tool in vincon moxy shorty tracksize; do
+for tool in vincon moxy shorty; do
     if [ ! -r "$tool" ]; then
         echo "Error: Required file '$tool' not found or not readable in current directory."
         exit 1
@@ -102,19 +102,8 @@ else
 fi
 
 echo ""
-
-echo "Installing tracksize..."
-if chmod +x tracksize && $INSTALL_CMD tracksize $INSTALL_PATH/tracksize; then
-    echo "✓ tracksize installed/updated successfully"
-else
-    echo "✗ Failed to install/update tracksize"
-    exit 1
-fi
-
-echo ""
 echo "Installation/Update Complete!"
 echo "You can now use the tools from anywhere in your system:"
 echo "  vincon /path/to/videos"
 echo "  moxy /path/to/mkv/files"
 echo "  shorty '3:10' video.mp4"
-echo "  tracksize video.mkv"
