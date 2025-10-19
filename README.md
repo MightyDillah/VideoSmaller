@@ -30,12 +30,7 @@ Usage examples:
            shorty 'h1:20:00-h1:25:00' video.mp4
            shorty '-90' video.mp4
 
-## Tracksize
-Shows a list of all tracks in an MKV file sorted by size, with human-readable formatting (KB, MB, GB)
 
-Usage examples:
-  Unix: tracksize video.mkv
-  Windows: tracksize video.mkv
 
 ## Install
 note: you also need python3, but i wont get into that here you should already have it anyway.
@@ -57,6 +52,16 @@ note: you also need python3, but i wont get into that here you should already ha
      - MKVToolNix: https://www.fosshub.com/MKVToolNix.html
      - MediaInfo: https://mediaarea.net/en/MediaInfo
 
+### Installation Scripts
+
+This project includes platform-specific installation scripts:
+
+- **update_vincon.sh**: For Unix-like systems (Linux/macOS)
+- **install.ps1**: For Windows systems (PowerShell)
+- **run_tool.bat**: Windows batch file for running tools
+
+These scripts handle the different installation approaches needed for each platform, as system architectures and path management differ across operating systems.
+
 ### Installation Methods:
 
 #### Unix-like systems (Linux/macOS) - Automated:
@@ -66,7 +71,6 @@ chmod +x update_vincon.sh && ./update_vincon.sh
 chmod +x vincon && sudo cp vincon /usr/local/bin/vincon
 chmod +x moxy && sudo cp moxy /usr/local/bin/moxy
 chmod +x shorty && sudo cp shorty /usr/local/bin/shorty
-chmod +x tracksize && sudo cp tracksize /usr/local/bin/tracksize
 
 #### Windows - Automated:
 1. Install Python 3 from https://python.org

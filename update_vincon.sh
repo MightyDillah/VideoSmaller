@@ -57,7 +57,6 @@ echo "The following commands will be executed:"
 echo "  chmod +x vincon && $INSTALL_CMD vincon $INSTALL_PATH/vincon"
 echo "  chmod +x moxy && $INSTALL_CMD moxy $INSTALL_PATH/moxy"
 echo "  chmod +x shorty && $INSTALL_CMD shorty $INSTALL_PATH/shorty"
-echo "  chmod +x tracksize && $INSTALL_CMD tracksize $INSTALL_PATH/tracksize"
 echo ""
 
 printf "Do you want to proceed with installation? (y/N): "

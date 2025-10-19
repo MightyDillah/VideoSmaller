@@ -294,6 +294,8 @@ def detect_available_encoders():
             else:
                 encoder_order = ['amf', 'nvenc', 'qsv', 'videotoolbox']  # Prefer AMD on Windows/Linux
         
+        print(f"Encoder detection order based on GPU vendor: {encoder_order}")
+        
         # Check encoders in the appropriate order
         for name in encoder_order:
             # Find the corresponding encoder
